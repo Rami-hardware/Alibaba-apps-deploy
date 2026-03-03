@@ -65,7 +65,6 @@
   # =========================
 
   # =========================
-
   # Packages
   apt:
     update_cache: yes
@@ -109,7 +108,6 @@
   # =========================
 
   # =========================
-
   # Time sync
   blockinfile:
     path: /etc/chrony/chrony.conf
@@ -137,7 +135,6 @@
   # =========================
 
   # =========================
-
   # Discover + Kerberos config
   command: realm discover {{ ad_domain }}
   register: realm_discover
@@ -155,7 +152,6 @@
   # =========================
 
   # =========================
-
   # Join logic (no kinit precheck)
   command: realm list
   register: realm_list
@@ -175,7 +171,7 @@
     responses:
       '(?i)password.*:': "{{ ad_password }}"
   register: realm_join
-  no_log: true
+  no_log: false
   changed_when: true
   failed_when: realm_join.rc != 0
   notify: restart sssd
@@ -193,7 +189,6 @@
   # =========================
 
   # =========================
-
   # SSSD configuration
   template:
     src: sssd.conf.j2
@@ -218,7 +213,6 @@
   # =========================
 
   # =========================
-
   # mkhomedir enablement (clean)
   command: pam-auth-update --enable mkhomedir --force
   changed_when: false
