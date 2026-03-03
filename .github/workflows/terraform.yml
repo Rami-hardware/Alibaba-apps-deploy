@@ -13,7 +13,7 @@ env:
   ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
 
 jobs:
-  infra:
+  Deploy:
     runs-on: ubuntu-latest
 
     steps:
