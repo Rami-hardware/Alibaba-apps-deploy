@@ -1,15 +1,37 @@
----
-- name: Ensure AD DNS is set
+# =========================
+# DNS (avoid direct resolv.conf when possible)
+# =========================
+- name: Detect if systemd-resolved is active
+  command: systemctl is-active systemd-resolved
+  register: resolved_active
+  changed_when: false
+  failed_when: false
+- name: Set DNS via systemd-resolved (preferred on Ubuntu)
+  when: resolved_active.stdout == "active"
+  block:
+    - name: Get default interface
+      shell: "ip -o -4 route show to default | awk '{print $5}' | head -n1"
+      register: default_if
+      changed_when: false
+    - name: Configure DNS for default interface
+      command: "resolvectl dns {{ default_if.stdout }} {{ ad_server }}"
+      changed_when: true
+    - name: Configure search domain for default interface
+      command: "resolvectl domain {{ default_if.stdout }} {{ ad_domain }}"
+      changed_when: true
+- name: Fallback - ensure AD DNS is set in /etc/resolv.conf (may be overwritten)
+  when: resolved_active.stdout != "active"
   lineinfile:
     path: /etc/resolv.conf
     line: "nameserver {{ ad_server }}"
     state: present
-
+# =========================
+# Packages
+# =========================
 - name: Ensure apt cache is up to date
   apt:
     update_cache: yes
     cache_valid_time: 3600
-
 - name: Install required packages for AD join
   apt:
     name:
@@ -27,30 +49,33 @@
       - policykit-1
       - chrony
     state: present
-
+# =========================
+# Time sync (Kerberos requires correct time)
+# =========================
 - name: Configure chrony to sync with AD domain controller
   blockinfile:
     path: /etc/chrony/chrony.conf
     marker: "# {mark} ANSIBLE MANAGED BLOCK - AD TIME"
     block: |
-      server {{ ad_server }} iburst
-      # Prefer AD for all time sync
-      prefer
+      server {{ ad_server }} iburst prefer
   notify: restart chrony
-
-
 - name: Ensure chrony is running
   service:
     name: chrony
     state: started
     enabled: true
-
+- name: Force time sync step (ignore if chrony not ready yet)
+  command: chronyc -a makestep
+  changed_when: false
+  failed_when: false
+# =========================
+# Discover + Kerberos config
+# =========================
 - name: Discover domain
   command: realm discover {{ ad_domain }}
   register: realm_discover
   failed_when: false
   changed_when: false
-
 - name: Configure /etc/krb5.conf
   template:
     src: krb5.conf.j2
@@ -59,15 +84,40 @@
     group: root
     mode: '0644'
   notify: restart sssd
-
-- name: Join domain using adcli and create keytab
+# =========================
+# Idempotency: skip join if already joined
+# =========================
+- name: Check current realm membership
+  command: realm list
+  register: realm_list
+  changed_when: false
+  failed_when: false
+# =========================
+# Pre-check: verify credentials with kinit
+# =========================
+- name: Kerberos auth test (kinit) - fails fast if password/user/realm is wrong
+  command: "kinit {{ ad_admin_user }}@{{ ad_realm }}"
+  args:
+    stdin: "{{ ad_password }}"
+  register: kinit_result
+  no_log: true
+  changed_when: false
+  when: ad_domain not in realm_list.stdout
+- name: Join domain using adcli and create keytab (secure + idempotent)
   command: >
-    bash -c "echo '{{ ad_password }}' | adcli join --domain={{ ad_domain }} --login-user={{ ad_admin_user }} --stdin-password --host-keytab=/etc/krb5.keytab --show-details --verbose"
-  register: adcli_output
-  failed_when: adcli_output.rc != 0
-  changed_when: "'Added the entries to the keytab' in adcli_output.stdout"
-  notify: restart sssd
+    adcli join --domain={{ ad_domain }} --login-user={{ ad_admin_user }} --stdin-password --host-keytab=/etc/krb5.keytab --show-details --verbose
 
+  args:
+    stdin: "{{ ad_password }}"
+  register: adcli_output
+  no_log: true
+  failed_when: adcli_output.rc != 0
+  changed_when: true
+  notify: restart sssd
+  when: ad_domain not in realm_list.stdout
+# =========================
+# SSSD configuration
+# =========================
 - name: Ensure /etc/sssd/sssd.conf from template
   template:
     src: sssd.conf.j2
@@ -76,21 +126,18 @@
     group: root
     mode: '0600'
   notify: restart sssd
-
-- name: Configure nsswitch to use sss
+- name: Configure nsswitch to use sss (passwd)
   lineinfile:
     path: /etc/nsswitch.conf
     regexp: '^(passwd:).*'
     line: 'passwd:         compat systemd sss'
     backrefs: yes
-
-- name: Configure group to use sss
+- name: Configure nsswitch to use sss (group)
   lineinfile:
     path: /etc/nsswitch.conf
     regexp: '^(group:).*'
     line: 'group:          compat systemd sss'
     backrefs: yes
-
 - name: Ensure PAM mkhomedir is enabled (Debian/Ubuntu)
   when: ansible_facts['os_family'] == 'Debian'
   copy:
@@ -99,7 +146,6 @@
     owner: root
     group: root
     mode: '0644'
-    
 - name: Ensure PAM mkhomedir is enabled (RHEL/CentOS)
   when: ansible_facts['os_family'] == 'RedHat'
   copy:
@@ -108,18 +154,8 @@
     owner: root
     group: root
     mode: '0644'
-
 - name: Ensure sssd service running
   service:
     name: sssd
     state: started
     enabled: true
-
-# Optional: add AD group to sudoers (comment/uncomment if desired)
-# - name: Give Domain Admins sudo rights (optional)
-#   copy:
-#     dest: /etc/sudoers.d/domain_admins
-#     content: "%{{ ad_netbios }}\\\\Domain\ Admins ALL=(ALL) NOPASSWD:ALL"
-#     owner: root
-#     group: root
-#     mode: '0440'
