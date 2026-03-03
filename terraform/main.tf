@@ -2,61 +2,75 @@ provider "alicloud" {
   region = "me-central-1"
 }
 
-# 2. Define the desired zone in a local variable for reuse.
-locals {
-  # This selects the first available zone from the data source lookup.
-  availability_zone = data.alicloud_zones.default.zones[0].id
-}
-
+# Get available zone
 data "alicloud_zones" "default" {
   available_resource_creation = "Instance"
 }
 
+locals {
+  availability_zone = data.alicloud_zones.default.zones[0].id
+}
+
+# Lookup existing VPC
 data "alicloud_vpcs" "existing" {
-  name_regex = "FAC-VPC" # Change if your VPC name is different
+  name_regex = "FAC-VPC"
 }
 
-data "alicloud_vswitch" "existing" {
-  id = "vsw-l4vvxjkc508ncrc9lin9k"
-}
-
+# Create new Security Group inside existing VPC
 resource "alicloud_security_group" "default" {
-  vpc_id = alicloud_vpc.vpc.id
+  vpc_id = data.alicloud_vpcs.existing.vpcs[0].id
+  name   = "nextcloud-sg"
 }
 
+# Create ECS instance
 resource "alicloud_instance" "instance" {
   availability_zone = local.availability_zone
+
   security_groups = [alicloud_security_group.default.id]
-  instance_type              = "ecs.c9i.xlarge"
-  system_disk_category       = "cloud_essd"
-  image_id                   = "ubuntu_24_04_x64_20G_alibase_20250916.vhd"
-  instance_name              = "nextcloud-ecs"
-  vswitch_id = data.alicloud_vswitches.existing.vswitches[0].id
+
+  instance_type        = "ecs.c9i.xlarge"
+  system_disk_category = "cloud_essd"
+  system_disk_size     = 200
+
+  image_id      = "ubuntu_24_04_x64_20G_alibase_20250916.vhd"
+  instance_name = "nextcloud-ecs"
+
+  # Use your existing vSwitch directly
+  vswitch_id = "vsw-l4vvxjkc508ncrc9lin9k"
+
   internet_max_bandwidth_out = 10
-  key_name = "RamiKey"
-  system_disk_size = 200
+  key_name                   = "RamiKey"
 }
 
-resource "alicloud_security_group_rule" "allow_all_tcp" {
+#  SECURITY: Allow only required ports (recommended)
+resource "alicloud_security_group_rule" "allow_http" {
   type              = "ingress"
   ip_protocol       = "tcp"
-  nic_type          = "intranet"
   policy            = "accept"
-  port_range        = "1/65535"
+  port_range        = "80/80"
   priority          = 1
   security_group_id = alicloud_security_group.default.id
-  cidr_ip = "0.0.0.0/0"
+  cidr_ip           = "0.0.0.0/0"
 }
+
+resource "alicloud_security_group_rule" "allow_https" {
+  type              = "ingress"
+  ip_protocol       = "tcp"
+  policy            = "accept"
+  port_range        = "443/443"
+  priority          = 1
+  security_group_id = alicloud_security_group.default.id
+  cidr_ip           = "0.0.0.0/0"
+}
+
 resource "alicloud_security_group_rule" "allow_ssh" {
   type              = "ingress"
   ip_protocol       = "tcp"
-  nic_type          = "intranet"
   policy            = "accept"
   port_range        = "22/22"
   priority          = 1
   security_group_id = alicloud_security_group.default.id
+
+  #  Change this to YOUR IP for better security
   cidr_ip = "0.0.0.0/0"
-}
-data "alicloud_oss_bucket" "existing" {
-  bucket = "your-existing-bucket-name"
 }
