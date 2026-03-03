@@ -125,5 +125,5 @@ jobs:
             -i inventory.ini \
             deploy.yml \
             --vault-password-file vault_pass.txt \
-            -e "ad_admin_password=${{ secrets.AD_ADMIN_PASSWORD }}" \
+            -e "ad_password=${{ secrets.AD_ADMIN_PASSWORD }}" \
             -e "ad_domain=fac.local ad_realm=FAC.LOCAL ad_server=10.50.6.206 ad_admin_user=administrator"
