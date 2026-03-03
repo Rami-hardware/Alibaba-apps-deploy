@@ -111,6 +111,12 @@ jobs:
         run: |
           ssh -i ~/.ssh/RamiKey.pem root@${{ steps.get_ip.outputs.ip }} "echo connected"
 
+      - name: Add host to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ steps.get_ip.outputs.ip }} >> ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
       # -----------------------------
       # Run Ansible (ONLY if infra changed)
       # -----------------------------
