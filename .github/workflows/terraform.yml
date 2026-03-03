@@ -1,4 +1,5 @@
 name: Deploying Nextcloud
+
 on:
   push:
     branches:
@@ -6,60 +7,118 @@ on:
   pull_request:
     branches:
       - main
-env: # <-- define env here once for the whole job
+
+env:
   ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
   ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
+
 jobs:
   infra:
     runs-on: ubuntu-latest
+
     steps:
+      # -----------------------------
+      # Checkout Repo
+      # -----------------------------
       - name: Checkout code
         uses: actions/checkout@v3
+
+      # -----------------------------
+      # Setup Terraform
+      # -----------------------------
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: ">=1.6 <2.0"
+
+      # -----------------------------
+      # Terraform Init
+      # -----------------------------
       - name: Terraform Init
         working-directory: terraform
         run: terraform init
+
+      # -----------------------------
+      # Terraform Validate
+      # -----------------------------
       - name: Terraform Validate
         working-directory: terraform
         run: terraform validate
+
+      # -----------------------------
+      # Terraform Plan (Detect Changes)
+      # -----------------------------
       - name: Terraform Plan
+        id: plan
         working-directory: terraform
-        run: terraform plan -out=tfplan
-      - name: Upload Terraform Plan
-        uses: actions/upload-artifact@v4
-        with:
-          name: tfplan
-          path: tfplan
+        run: |
+          terraform plan -detailed-exitcode -out=tfplan || exitcode=$?
+          echo "exitcode=${exitcode:-0}" >> $GITHUB_OUTPUT
+        continue-on-error: true
+
+      # -----------------------------
+      # Terraform Apply (ONLY if changes)
+      # -----------------------------
+      - name: Terraform Apply
+        if: steps.plan.outputs.exitcode == '2'
+        working-directory: terraform
+        run: terraform apply -auto-approve tfplan
+
+      # -----------------------------
+      # Get Public IP from Terraform
+      # -----------------------------
+      - name: Get Public IP
+        id: get_ip
+        if: steps.plan.outputs.exitcode == '2'
+        working-directory: terraform
+        run: |
+          echo "ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
+
+      # -----------------------------
+      # Setup SSH Key
+      # -----------------------------
       - name: Setup SSH key
+        if: steps.plan.outputs.exitcode == '2'
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.ALI_PEM_KEY }}" > ~/.ssh/RamiKey.pem
           chmod 600 ~/.ssh/RamiKey.pem
-      
-      - name: Apply only if there are changes
-        working-directory: terraform
-        run: terraform apply -auto-approve tfplan
 
+      # -----------------------------
+      # Disable SSH Host Key Checking
+      # -----------------------------
       - name: Disable SSH host key checking
+        if: steps.plan.outputs.exitcode == '2'
         run: |
           echo -e "Host *\n\tStrictHostKeyChecking no\n" >> ~/.ssh/config
           chmod 600 ~/.ssh/config
+
+      # -----------------------------
+      # Setup Ansible Vault Password
+      # -----------------------------
       - name: Setup Ansible Vault password
+        if: steps.plan.outputs.exitcode == '2'
         working-directory: ansible
         run: |
-          # Create folder if needed (optional)
-          mkdir -p .
-          # Write vault password inside current folder
           echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > vault_pass.txt
           chmod 600 vault_pass.txt
+
+      # -----------------------------
+      # Test SSH
+      # -----------------------------
       - name: Test SSH connection
-        run: ssh -i ~/.ssh/RamiKey.pem root@8.213.49.218 "echo connected"
+        if: steps.plan.outputs.exitcode == '2'
+        run: |
+          ssh -i ~/.ssh/RamiKey.pem root@${{ steps.get_ip.outputs.ip }} "echo connected"
+
+      # -----------------------------
+      # Run Ansible (ONLY if infra changed)
+      # -----------------------------
       - name: Run Ansible
+        if: steps.plan.outputs.exitcode == '2'
         working-directory: ansible
         run: |
-          ansible-playbook -i inventory.ini deploy.yml --vault-password-file vault_pass.txt \
+          ansible-playbook -i inventory.ini deploy.yml \
+          --vault-password-file vault_pass.txt \
           -e "ad_admin_password=${{ secrets.AD_ADMIN_PASSWORD }}" \
           -e "ad_domain=fac.local ad_realm=FAC.LOCAL ad_server=10.50.6.206 ad_admin_user=administrator"
