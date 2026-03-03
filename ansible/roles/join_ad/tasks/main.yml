@@ -19,11 +19,10 @@
     - name: Set search domain
       command: resolvectl domain {{ default_if.stdout }} {{ ad_domain }}
       changed_when: false
+# =========================
+# Packages
+# =========================
 - name: Update apt cache (Debian)
-  # =========================
-
-  # =========================
-  # Packages
   apt:
     update_cache: yes
     cache_valid_time: 3600
@@ -58,11 +57,10 @@
       - chrony
     state: present
   when: ansible_facts.os_family == "RedHat"
+# =========================
+# Time Sync
+# =========================
 - name: Configure chrony
-  # =========================
-
-  # =========================
-  # Time Sync
   blockinfile:
     path: /etc/chrony/chrony.conf
     marker: "# {mark} ANSIBLE MANAGED BLOCK - AD TIME"
@@ -85,11 +83,10 @@
   command: chronyc -a makestep
   changed_when: false
   failed_when: false
+# =========================
+# Kerberos Config
+# =========================
 - name: Configure krb5
-  # =========================
-
-  # =========================
-  # Kerberos Config
   template:
     src: krb5.conf.j2
     dest: /etc/krb5.conf
@@ -97,18 +94,18 @@
     group: root
     mode: "0644"
   notify: restart sssd
+# =========================
+# Join AD
+# =========================
 - name: Check realm membership
-  # =========================
-
-  # =========================
-  # Join AD
   command: realm list --name-only
   register: realm_list
   changed_when: false
   failed_when: false
-- name: Set short computer name (15 char limit)
+- name: Set short computer name (15 char NetBIOS limit)
   set_fact:
     ad_computer_name: "{{ ansible_hostname[:15] }}"
+# ---- Obtain Kerberos Ticket (SAFE PASSWORD HANDLING) ----
 - name: Obtain Kerberos ticket
   command: kinit {{ ad_admin_user }}@{{ ad_realm }}
   args:
@@ -118,9 +115,8 @@
   changed_when: false
   failed_when: kinit_result.rc != 0
   when: ad_domain not in realm_list.stdout
+# ---- Join Using Kerberos Ticket ----
 - name: Join domain using Kerberos ticket
-  # ---- Join using Kerberos ticket ----
-
   command: >
     adcli join {{ ad_domain }} --domain-controller={{ ad_server }} --computer-name={{ ad_computer_name }} --no-password
 
@@ -129,14 +125,14 @@
   failed_when: adcli_join.rc != 0
   when: ad_domain not in realm_list.stdout
   notify: restart sssd
+# ---- Destroy Ticket (cleanup) ----
 - name: Destroy Kerberos ticket
   command: kdestroy
   changed_when: false
   ignore_errors: true
   when: ad_domain not in realm_list.stdout
+# ---- Validate Join ----
 - name: Validate join
-  # ---- Validate ----
-
   command: realm list --name-only
   register: realm_list_after
   changed_when: false
@@ -145,11 +141,10 @@
   fail:
     msg: "Domain join failed."
   when: ad_domain not in realm_list_after.stdout
+# =========================
+# SSSD Configuration
+# =========================
 - name: Configure sssd
-  # =========================
-
-  # =========================
-  # SSSD
   template:
     src: sssd.conf.j2
     dest: /etc/sssd/sssd.conf
@@ -167,11 +162,10 @@
     path: /etc/nsswitch.conf
     regexp: "^group:"
     line: "group:      files sss"
+# =========================
+# mkhomedir
+# =========================
 - name: Enable mkhomedir (Debian)
-  # =========================
-
-  # =========================
-  # mkhomedir
   command: pam-auth-update --enable mkhomedir --force
   changed_when: false
   when: ansible_facts.os_family == "Debian"
