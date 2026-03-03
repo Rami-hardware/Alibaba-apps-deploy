@@ -109,14 +109,14 @@
 - name: Set short computer name (15 char NetBIOS limit)
   set_fact:
     ad_computer_name: "{{ ansible_hostname[:15] }}"
-- name: Join domain using realm
-  command: >
-    realm join {{ ad_domain }} --user={{ ad_admin_user }} --computer-name={{ ad_computer_name }}
-
+- name: Join domain using realm (force TTY)
+  shell: |
+    realm join {{ ad_domain }} --user={{ ad_admin_user }}
   args:
     stdin: "{{ ad_password }}\n"
+    executable: /bin/bash
+  no_log: true
   register: realm_join
-  no_log: false
   changed_when: true
   failed_when: realm_join.rc != 0
   when: ad_domain not in realm_list.stdout
