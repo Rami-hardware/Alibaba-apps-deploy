@@ -19,12 +19,11 @@
     - name: Set search domain
       command: resolvectl domain {{ default_if.stdout }} {{ ad_domain }}
       changed_when: false
-# =========================
 - name: Update apt cache (Debian)
   # =========================
 
+  # =========================
   # Packages
-
   apt:
     update_cache: yes
     cache_valid_time: 3600
@@ -59,12 +58,11 @@
       - chrony
     state: present
   when: ansible_facts.os_family == "RedHat"
-# =========================
 - name: Configure chrony
   # =========================
 
+  # =========================
   # Time Sync
-
   blockinfile:
     path: /etc/chrony/chrony.conf
     marker: "# {mark} ANSIBLE MANAGED BLOCK - AD TIME"
@@ -87,12 +85,11 @@
   command: chronyc -a makestep
   changed_when: false
   failed_when: false
-# =========================
 - name: Configure krb5
   # =========================
 
+  # =========================
   # Kerberos Config
-
   template:
     src: krb5.conf.j2
     dest: /etc/krb5.conf
@@ -100,12 +97,11 @@
     group: root
     mode: "0644"
   notify: restart sssd
-# =========================
 - name: Check realm membership
   # =========================
 
+  # =========================
   # Join AD
-
   command: realm list --name-only
   register: realm_list
   changed_when: false
@@ -114,9 +110,9 @@
   set_fact:
     ad_computer_name: "{{ ansible_hostname[:15] }}"
 - name: Obtain Kerberos ticket
-  # ---- Kerberos ticket ----
-
-  shell: echo "{{ ad_password }}" | kinit {{ ad_admin_user }}@{{ ad_realm }}
+  command: kinit {{ ad_admin_user }}@{{ ad_realm }}
+  args:
+    stdin: "{{ ad_password }}\n"
   no_log: false
   register: kinit_result
   changed_when: false
@@ -149,12 +145,11 @@
   fail:
     msg: "Domain join failed."
   when: ad_domain not in realm_list_after.stdout
-# =========================
 - name: Configure sssd
   # =========================
 
+  # =========================
   # SSSD
-
   template:
     src: sssd.conf.j2
     dest: /etc/sssd/sssd.conf
@@ -172,12 +167,11 @@
     path: /etc/nsswitch.conf
     regexp: "^group:"
     line: "group:      files sss"
-# =========================
 - name: Enable mkhomedir (Debian)
   # =========================
 
+  # =========================
   # mkhomedir
-
   command: pam-auth-update --enable mkhomedir --force
   changed_when: false
   when: ansible_facts.os_family == "Debian"
