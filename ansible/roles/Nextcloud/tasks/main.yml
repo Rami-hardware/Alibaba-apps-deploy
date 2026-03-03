@@ -1,9 +1,137 @@
-  - name: Wait for Nextcloud to be ready
-    uri:
-      url: http://localhost:8080
-      status_code: 200
-      validate_certs: no
-    register: result
-    retries: 20
-    delay: 10
-    until: result.status == 200
+# =========================
+# Update APT
+# =========================
+- name: Update apt cache
+  apt:
+    update_cache: yes
+    cache_valid_time: 3600
+# =========================
+# Install Required Packages
+# =========================
+- name: Install Apache, PHP, Redis and dependencies
+  apt:
+    name:
+      - apache2
+      - redis-server
+      - php{{ php_version }}
+      - php{{ php_version }}-fpm
+      - php-mysql
+      - php-curl
+      - php-pgsql
+      - php-apcu
+      - php-bcmath
+      - php-dom
+      - php-gd
+      - php-gmp
+      - php-memcached
+      - php-redis
+      - php-smbclient
+      - php-ldap
+      - php-zip
+      - php-mbstring
+      - php-imagick
+      - php-intl
+      - php-bz2
+      - libmagickcore-6.q16-6-extra
+      - ffmpeg
+      - nfs-common
+      - smbclient
+      - unzip
+    state: present
+# =========================
+# Apache Modules
+# =========================
+- name: Enable required Apache modules
+  command: a2enmod {{ item }}
+  with_items:
+    - rewrite
+    - headers
+    - env
+    - dir
+    - mime
+    - ssl
+    - proxy_fcgi
+    - setenvif
+    - mpm_event
+  notify: restart apache
+- name: Disable prefork + mod_php
+  command: a2dismod {{ item }}
+  with_items:
+    - php{{ php_version }}
+    - mpm_prefork
+  notify: restart apache
+  ignore_errors: true
+- name: Enable PHP-FPM config
+  command: a2enconf php{{ php_version }}-fpm
+  notify: restart apache
+# =========================
+# Apache Security Hardening
+# =========================
+- name: Configure Apache security options
+  blockinfile:
+    path: /etc/apache2/apache2.conf
+    marker: "# {mark} ANSIBLE MANAGED BLOCK - APACHE HARDENING"
+    block: |
+      ServerTokens Prod
+      ServerSignature Off
+  notify: restart apache
+# =========================
+# PHP Configuration
+# =========================
+- name: Configure php.ini settings
+  lineinfile:
+    path: "/etc/php/{{ php_version }}/fpm/php.ini"
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - {regexp: '^upload_max_filesize', line: 'upload_max_filesize = {{ php_upload_max_filesize }}'}
+    - {regexp: '^post_max_size', line: 'post_max_size = {{ php_post_max_size }}'}
+    - {regexp: '^memory_limit', line: 'memory_limit = {{ php_memory_limit }}'}
+    - {regexp: '^output_buffering', line: 'output_buffering = {{ php_output_buffering }}'}
+    - {regexp: '^expose_php', line: 'expose_php = {{ php_expose_php }}'}
+    - {regexp: '^;?opcache.interned_strings_buffer', line: 'opcache.interned_strings_buffer={{ php_opcache_interned_strings_buffer }}'}
+  notify: restart php-fpm
+- name: Enable APC CLI
+  lineinfile:
+    path: "/etc/php/{{ php_version }}/fpm/php.ini"
+    line: "apc.enable_cli = 1"
+    state: present
+  notify: restart php-fpm
+- name: Ensure APC CLI in conf.d
+  lineinfile:
+    path: "/etc/php/{{ php_version }}/fpm/conf.d/20-apcu.ini"
+    line: "apc.enable_cli = 1"
+    state: present
+  notify: restart php-fpm
+# =========================
+# PHP-FPM Pool Tuning
+# =========================
+- name: Configure PHP-FPM pool settings
+  lineinfile:
+    path: "/etc/php/{{ php_version }}/fpm/pool.d/www.conf"
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - {regexp: '^pm.max_children', line: 'pm.max_children = {{ php_fpm_max_children }}'}
+    - {regexp: '^pm.start_servers', line: 'pm.start_servers = {{ php_fpm_start_servers }}'}
+    - {regexp: '^pm.min_spare_servers', line: 'pm.min_spare_servers = {{ php_fpm_min_spare }}'}
+    - {regexp: '^pm.max_spare_servers', line: 'pm.max_spare_servers = {{ php_fpm_max_spare }}'}
+  notify: restart php-fpm
+# =========================
+# Ensure Services Running
+# =========================
+- name: Ensure Apache running
+  service:
+    name: apache2
+    state: started
+    enabled: true
+- name: Ensure PHP-FPM running
+  service:
+    name: php{{ php_version }}-fpm
+    state: started
+    enabled: true
+- name: Ensure Redis running
+  service:
+    name: redis-server
+    state: started
+    enabled: true

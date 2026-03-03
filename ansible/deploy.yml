@@ -3,3 +3,4 @@
   become: true
   roles:
     - join_ad
+    - Nextcloud
