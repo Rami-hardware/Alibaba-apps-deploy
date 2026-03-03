@@ -1,5 +1,5 @@
 - name: Deploy Nextcloud with OSS as main storage
-  hosts: nextcloud-ecs
+  hosts: nextcloud_ecs
   become: true
   roles:
     - join_ad
