@@ -106,6 +106,9 @@
   register: realm_list
   changed_when: false
   failed_when: false
+- name: Set short computer name (15 char NetBIOS limit)
+  set_fact:
+    ad_computer_name: "{{ ansible_hostname[:15] }}"
 - name: Join domain using realm
   command: >
     realm join {{ ad_domain }} --user={{ ad_admin_user }} --computer-name={{ ad_computer_name }}
