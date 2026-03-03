@@ -19,9 +19,8 @@
     - name: Configure search domain for default interface
       command: "resolvectl domain {{ default_if.stdout }} {{ ad_domain }}"
       changed_when: false
+# If systemd-resolved is NOT active, try NetworkManager first (common on RHEL and some Ubuntu)
 - name: Detect NetworkManager
-  # If systemd-resolved is not active, try NetworkManager first (common on RHEL and some Ubuntu)
-
   command: systemctl is-active NetworkManager
   register: nm_active
   changed_when: false
@@ -46,9 +45,8 @@
     - name: Restart connection to apply DNS
       command: nmcli con up "{{ nm_conn.stdout }}"
       changed_when: false
+# Last resort: only edit /etc/resolv.conf if it is NOT a symlink (so we don't fight resolvconf/systemd-resolved)
 - name: Check if /etc/resolv.conf is a symlink
-  # Last resort: write resolv.conf only if it's not a symlink (so we don't fight resolvconf/systemd-resolved)
-
   stat:
     path: /etc/resolv.conf
   register: resolvconf_stat
@@ -65,15 +63,14 @@
     regexp: '^nameserver\s+{{ ad_server | regex_escape() }}$'
     line: "nameserver {{ ad_server }}"
     state: present
+# =========================
 # Packages
 # =========================
 - name: Ensure apt cache is up to date (Debian/Ubuntu)
-  # =========================
-
   apt:
     update_cache: yes
     cache_valid_time: 3600
-  when: ansible_facts.os_family == 'Debian'
+  when: ansible_facts['os_family'] == 'Debian'
 - name: Install required packages for AD join (Debian/Ubuntu)
   apt:
     name:
@@ -91,7 +88,7 @@
       - policykit-1
       - chrony
     state: present
-  when: ansible_facts.os_family == 'Debian'
+  when: ansible_facts['os_family'] == 'Debian'
 - name: Install required packages for AD join (RHEL/CentOS/Fedora)
   package:
     name:
@@ -105,12 +102,11 @@
       - oddjob-mkhomedir
       - chrony
     state: present
-  when: ansible_facts.os_family == 'RedHat'
+  when: ansible_facts['os_family'] == 'RedHat'
+# =========================
 # Time sync (Kerberos needs correct time)
 # =========================
 - name: Configure chrony to sync with AD domain controller
-  # =========================
-
   blockinfile:
     path: /etc/chrony/chrony.conf
     marker: "# {mark} ANSIBLE MANAGED BLOCK - AD TIME"
@@ -122,22 +118,29 @@
     name: chrony
     state: started
     enabled: true
-  when: ansible_facts.os_family == 'Debian'
+  when: ansible_facts['os_family'] == 'Debian'
 - name: Ensure chrony service is running (RHEL)
   service:
     name: chronyd
     state: started
     enabled: true
-  when: ansible_facts.os_family == 'RedHat'
+  when: ansible_facts['os_family'] == 'RedHat'
 - name: Force time sync step (ignore if not ready yet)
   command: chronyc -a makestep
   changed_when: false
   failed_when: false
+- name: Show time status (debug)
+  command: timedatectl
+  register: timedate
+  changed_when: false
+  failed_when: false
+- name: Print time status
+  debug:
+    var: timedate.stdout_lines
+# =========================
 # Discover + Kerberos config
 # =========================
 - name: Discover domain
-  # =========================
-
   command: realm discover {{ ad_domain }}
   register: realm_discover
   failed_when: false
@@ -150,30 +153,36 @@
     group: root
     mode: '0644'
   notify: restart sssd
+# =========================
 # Idempotency: skip if already joined
 # =========================
 - name: Check current realm membership
-  # =========================
-
   command: realm list
   register: realm_list
   changed_when: false
   failed_when: false
+# =========================
+# Build Kerberos principal safely
+# If ad_admin_user already contains '@', use it as-is.
+# Otherwise append @ad_realm (NO UPPERCASE)
+# =========================
 - name: Set Kerberos principal
   set_fact:
     ad_principal: >-
       {{ ad_admin_user if ('@' in ad_admin_user) else (ad_admin_user ~ '@' ~ ad_realm) }}
+- name: Debug principal (safe)
+  debug:
+    msg: "Using Kerberos principal: {{ ad_principal }}"
+# =========================
 # Pre-check: verify credentials with kinit
-# NOTE: use shell so stdin works reliably.
+# FIX: add newline to stdin
 # =========================
 - name: Kerberos auth test (kinit) - secure (uses stdin)
-  # =========================
-
   shell: "kinit {{ ad_principal }}"
   args:
-    stdin: "{{ ad_password }}"
+    stdin: "{{ ad_password }}\n"
   register: kinit_result
-  no_log: false
+  no_log: true
   changed_when: false
   when: ad_domain not in realm_list.stdout
 - name: Kerberos debug (kinit -V) - safe output (no password)
@@ -190,28 +199,26 @@
   fail:
     msg: "Kerberos authentication failed for {{ ad_principal }}. See kinit -V debug output above."
   when: (ad_domain not in realm_list.stdout) and (kinit_result is failed)
+# =========================
 # Join domain (secure + idempotent)
-# Prefer realm join (integrates with realmd), fall back to adcli join if you want.
+# Use realm join (recommended). Password via stdin with newline.
 # =========================
 - name: Join domain using realm (creates keytab)
-  # =========================
-
   shell: >
-    realm join --verbose {{ ad_domain }} --user={{ ad_admin_user }} --membership-software=adcli
+    realm join {{ ad_domain }} --user={{ ad_admin_user }} --membership-software=adcli --verbose
 
   args:
-    stdin: "{{ ad_password }}"
+    stdin: "{{ ad_password }}\n"
   register: realm_join
   no_log: true
   changed_when: true
   failed_when: realm_join.rc != 0
   notify: restart sssd
   when: ad_domain not in realm_list.stdout
+# =========================
 # SSSD configuration
 # =========================
 - name: Ensure /etc/sssd/sssd.conf from template
-  # =========================
-
   template:
     src: sssd.conf.j2
     dest: /etc/sssd/sssd.conf
@@ -231,13 +238,12 @@
     regexp: '^group:'
     line: 'group:      files sss'
     create: false
+# Enable mkhomedir properly (don’t drop random pam files)
 - name: Enable mkhomedir on Debian/Ubuntu (pam-auth-update)
-  # Enable mkhomedir properly
-
   command: pam-auth-update --enable mkhomedir --force
   changed_when: false
-  when: ansible_facts.os_family == 'Debian'
-- name: Enable mkhomedir on RHEL (authselect, if available)
+  when: ansible_facts['os_family'] == 'Debian'
+- name: Enable mkhomedir on RHEL (authselect/authconfig)
   shell: |
     if command -v authselect >/dev/null 2>&1; then
       authselect current >/dev/null 2>&1 || authselect select sssd with-mkhomedir --force
@@ -249,7 +255,7 @@
       exit 0
     fi
   changed_when: false
-  when: ansible_facts.os_family == 'RedHat'
+  when: ansible_facts['os_family'] == 'RedHat'
 - name: Ensure sssd service running
   service:
     name: sssd
