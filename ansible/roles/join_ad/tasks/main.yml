@@ -6,54 +6,27 @@
   register: resolved_active
   changed_when: false
   failed_when: false
-- name: Set DNS via systemd-resolved
+- name: Configure DNS via systemd-resolved
   when: resolved_active.stdout == "active"
   block:
     - name: Get default interface
-      shell: "ip -o -4 route show to default | awk '{print $5}' | head -n1"
+      shell: ip -o -4 route show to default | awk '{print $5}' | head -n1
       register: default_if
       changed_when: false
-    - name: Configure DNS
-      command: "resolvectl dns {{ default_if.stdout }} {{ ad_server }}"
+    - name: Set DNS server
+      command: resolvectl dns {{ default_if.stdout }} {{ ad_server }}
       changed_when: false
-    - name: Configure search domain
-      command: "resolvectl domain {{ default_if.stdout }} {{ ad_domain }}"
-      changed_when: false
-- name: Detect NetworkManager
-  command: systemctl is-active NetworkManager
-  register: nm_active
-  changed_when: false
-  failed_when: false
-  when: resolved_active.stdout != "active"
-- name: Configure DNS via NetworkManager
-  when:
-    - resolved_active.stdout != "active"
-    - nm_active.stdout == "active"
-  block:
-    - name: Get active connection
-      shell: |
-        IFACE="$(ip -o -4 route show to default | awk '{print $5}' | head -n1)"
-        nmcli -t -f NAME,DEVICE con show --active | awk -F: -v i="$IFACE" '$2==i{print $1; exit}'
-      register: nm_conn
-      changed_when: false
-    - name: Set DNS settings
-      command: >
-        nmcli con mod "{{ nm_conn.stdout }}" ipv4.dns "{{ ad_server }}" ipv4.dns-search "{{ ad_domain }}" ipv4.ignore-auto-dns yes
-
-      changed_when: false
-    - name: Restart connection
-      command: nmcli con up "{{ nm_conn.stdout }}"
+    - name: Set search domain
+      command: resolvectl domain {{ default_if.stdout }} {{ ad_domain }}
       changed_when: false
 # =========================
+# Packages
+# =========================
 - name: Update apt cache (Debian)
-  # =========================
-
-  # Packages
-
   apt:
     update_cache: yes
     cache_valid_time: 3600
-  when: ansible_facts.os_family == 'Debian'
+  when: ansible_facts.os_family == "Debian"
 - name: Install packages (Debian)
   apt:
     name:
@@ -67,11 +40,9 @@
       - libpam-sss
       - oddjob
       - oddjob-mkhomedir
-      - packagekit
-      - policykit-1
       - chrony
     state: present
-  when: ansible_facts.os_family == 'Debian'
+  when: ansible_facts.os_family == "Debian"
 - name: Install packages (RHEL)
   package:
     name:
@@ -85,13 +56,11 @@
       - oddjob-mkhomedir
       - chrony
     state: present
-  when: ansible_facts.os_family == 'RedHat'
+  when: ansible_facts.os_family == "RedHat"
+# =========================
+# Time Sync
 # =========================
 - name: Configure chrony
-  # =========================
-
-  # Time Sync
-
   blockinfile:
     path: /etc/chrony/chrony.conf
     marker: "# {mark} ANSIBLE MANAGED BLOCK - AD TIME"
@@ -103,55 +72,63 @@
     name: chrony
     state: started
     enabled: true
-  when: ansible_facts.os_family == 'Debian'
+  when: ansible_facts.os_family == "Debian"
 - name: Ensure chrony running (RHEL)
   service:
     name: chronyd
     state: started
     enabled: true
-  when: ansible_facts.os_family == 'RedHat'
+  when: ansible_facts.os_family == "RedHat"
 - name: Force time sync
   command: chronyc -a makestep
   changed_when: false
   failed_when: false
 # =========================
+# Kerberos Config
+# =========================
 - name: Configure krb5
-  # =========================
-
-  # Kerberos Config
-
   template:
     src: krb5.conf.j2
     dest: /etc/krb5.conf
     owner: root
     group: root
-    mode: '0644'
+    mode: "0644"
   notify: restart sssd
 # =========================
+# Join AD
+# =========================
 - name: Check realm membership
-  # =========================
-
-  # Join AD
-
   command: realm list --name-only
   register: realm_list
   changed_when: false
   failed_when: false
-- name: Set short computer name
+- name: Set short computer name (15 char limit)
   set_fact:
     ad_computer_name: "{{ ansible_hostname[:15] }}"
-- name: Join domain using adcli
-  shell: >
-    adcli join {{ ad_domain }} --login-user={{ ad_admin_user }} --domain-controller={{ ad_server }} --computer-name={{ ad_computer_name }} --stdin-password
+# ---- Kerberos ticket ----
+- name: Obtain Kerberos ticket
+  shell: echo "{{ ad_password }}" | kinit {{ ad_admin_user }}@{{ ad_realm }}
+  no_log: true
+  register: kinit_result
+  changed_when: false
+  failed_when: kinit_result.rc != 0
+  when: ad_domain not in realm_list.stdout
+# ---- Join using Kerberos ticket ----
+- name: Join domain using Kerberos ticket
+  command: >
+    adcli join {{ ad_domain }} --domain-controller={{ ad_server }} --computer-name={{ ad_computer_name }} --no-password
 
-  args:
-    stdin: "{{ ad_password }}\n"
   register: adcli_join
-  no_log: false
   changed_when: true
   failed_when: adcli_join.rc != 0
-  notify: restart sssd
   when: ad_domain not in realm_list.stdout
+  notify: restart sssd
+- name: Destroy Kerberos ticket
+  command: kdestroy
+  changed_when: false
+  ignore_errors: true
+  when: ad_domain not in realm_list.stdout
+# ---- Validate ----
 - name: Validate join
   command: realm list --name-only
   register: realm_list_after
@@ -162,37 +139,33 @@
     msg: "Domain join failed."
   when: ad_domain not in realm_list_after.stdout
 # =========================
+# SSSD
+# =========================
 - name: Configure sssd
-  # =========================
-
-  # SSSD Configuration
-
   template:
     src: sssd.conf.j2
     dest: /etc/sssd/sssd.conf
     owner: root
     group: root
-    mode: '0600'
+    mode: "0600"
   notify: restart sssd
 - name: Configure nsswitch passwd
   lineinfile:
     path: /etc/nsswitch.conf
-    regexp: '^passwd:'
-    line: 'passwd:     files sss'
+    regexp: "^passwd:"
+    line: "passwd:     files sss"
 - name: Configure nsswitch group
   lineinfile:
     path: /etc/nsswitch.conf
-    regexp: '^group:'
-    line: 'group:      files sss'
+    regexp: "^group:"
+    line: "group:      files sss"
+# =========================
+# mkhomedir
 # =========================
 - name: Enable mkhomedir (Debian)
-  # =========================
-
-  # mkhomedir
-
   command: pam-auth-update --enable mkhomedir --force
   changed_when: false
-  when: ansible_facts.os_family == 'Debian'
+  when: ansible_facts.os_family == "Debian"
 - name: Enable mkhomedir (RHEL)
   shell: |
     if command -v authselect >/dev/null 2>&1; then
@@ -202,7 +175,7 @@
       authconfig --enablemkhomedir --update
     fi
   changed_when: false
-  when: ansible_facts.os_family == 'RedHat'
+  when: ansible_facts.os_family == "RedHat"
 - name: Ensure sssd running
   service:
     name: sssd
