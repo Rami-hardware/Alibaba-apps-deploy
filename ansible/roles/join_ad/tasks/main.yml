@@ -1,5 +1,5 @@
 # =========================
-# DNS (avoid direct resolv.conf when possible)
+# DNS
 # =========================
 - name: Detect if systemd-resolved is active
   command: systemctl is-active systemd-resolved
@@ -25,10 +25,11 @@
     path: /etc/resolv.conf
     line: "nameserver {{ ad_server }}"
     state: present
-# =========================
 # Packages
 # =========================
 - name: Ensure apt cache is up to date
+  # =========================
+
   apt:
     update_cache: yes
     cache_valid_time: 3600
@@ -49,10 +50,11 @@
       - policykit-1
       - chrony
     state: present
-# =========================
-# Time sync (Kerberos requires correct time)
+# Time sync (Kerberos needs correct time)
 # =========================
 - name: Configure chrony to sync with AD domain controller
+  # =========================
+
   blockinfile:
     path: /etc/chrony/chrony.conf
     marker: "# {mark} ANSIBLE MANAGED BLOCK - AD TIME"
@@ -68,10 +70,19 @@
   command: chronyc -a makestep
   changed_when: false
   failed_when: false
-# =========================
+- name: Show time status (debug)
+  command: timedatectl
+  register: timedate
+  changed_when: false
+  failed_when: false
+- name: Print time status
+  debug:
+    var: timedate.stdout_lines
 # Discover + Kerberos config
 # =========================
 - name: Discover domain
+  # =========================
+
   command: realm discover {{ ad_domain }}
   register: realm_discover
   failed_when: false
@@ -84,18 +95,23 @@
     group: root
     mode: '0644'
   notify: restart sssd
-# =========================
-# Idempotency: skip join if already joined
+# Idempotency: skip if already joined
 # =========================
 - name: Check current realm membership
+  # =========================
+
   command: realm list
   register: realm_list
   changed_when: false
   failed_when: false
+# Pre-check: verify credentials with kinit (secure) + debug (no secrets)
 # =========================
-# Pre-check: verify credentials with kinit
-# =========================
-- name: Kerberos auth test (kinit) - fails fast if password/user/realm is wrong
+# If you set ad_admin_user as "administrator@FAC.LOCAL", set ad_realm and ad_domain normally.
+# This task will work either way; if ad_admin_user already includes "@REALM", it still works
+# but you should then pass it without "@{{ ad_realm }}" (see note below).
+- name: Kerberos auth test (kinit) - secure (uses stdin)
+  # =========================
+
   command: "kinit {{ ad_admin_user }}@{{ ad_realm }}"
   args:
     stdin: "{{ ad_password }}"
@@ -103,7 +119,21 @@
   no_log: true
   changed_when: false
   when: ad_domain not in realm_list.stdout
-- name: Join domain using adcli and create keytab (secure + idempotent)
+- name: Kerberos debug (show kinit error only, no password)
+  command: "kinit -V {{ ad_admin_user }}@{{ ad_realm }}"
+  register: kinit_debug
+  changed_when: false
+  failed_when: false
+  when: kinit_result is failed and ad_domain not in realm_list.stdout
+- name: Print kinit debug stderr (safe)
+  debug:
+    var: kinit_debug.stderr_lines
+  when: kinit_result is failed and ad_domain not in realm_list.stdout
+# Join domain (secure + idempotent)
+# =========================
+- name: Join domain using adcli and create keytab
+  # =========================
+
   command: >
     adcli join --domain={{ ad_domain }} --login-user={{ ad_admin_user }} --stdin-password --host-keytab=/etc/krb5.keytab --show-details --verbose
 
@@ -115,10 +145,11 @@
   changed_when: true
   notify: restart sssd
   when: ad_domain not in realm_list.stdout
-# =========================
 # SSSD configuration
 # =========================
 - name: Ensure /etc/sssd/sssd.conf from template
+  # =========================
+
   template:
     src: sssd.conf.j2
     dest: /etc/sssd/sssd.conf
