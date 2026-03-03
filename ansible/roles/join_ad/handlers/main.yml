@@ -1,13 +1,8 @@
----
-# Handler to restart chrony when time sync configuration changes
-- name: restart chrony
-  service:
-    name: chrony
-    state: restarted
-    enabled: true
-
 - name: restart sssd
   service:
     name: sssd
     state: restarted
-    enabled: true
+- name: restart chrony
+  service:
+    name: "{{ 'chrony' if ansible_facts.os_family == 'Debian' else 'chronyd' }}"
+    state: restarted

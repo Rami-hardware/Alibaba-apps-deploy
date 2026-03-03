@@ -6,7 +6,7 @@
   register: resolved_active
   changed_when: false
   failed_when: false
-- name: Set DNS via systemd-resolved (preferred on Ubuntu)
+- name: Set DNS via systemd-resolved (preferred when active)
   when: resolved_active.stdout == "active"
   block:
     - name: Get default interface
@@ -15,24 +15,63 @@
       changed_when: false
     - name: Configure DNS for default interface
       command: "resolvectl dns {{ default_if.stdout }} {{ ad_server }}"
-      changed_when: true
+      changed_when: false
     - name: Configure search domain for default interface
       command: "resolvectl domain {{ default_if.stdout }} {{ ad_domain }}"
-      changed_when: true
-- name: Fallback - ensure AD DNS is set in /etc/resolv.conf (may be overwritten)
+      changed_when: false
+# If systemd-resolved is not active, try NetworkManager first (common on RHEL and some Ubuntu)
+- name: Detect NetworkManager
+  command: systemctl is-active NetworkManager
+  register: nm_active
+  changed_when: false
+  failed_when: false
   when: resolved_active.stdout != "active"
+- name: Set DNS via NetworkManager (when active)
+  when:
+    - resolved_active.stdout != "active"
+    - nm_active.stdout == "active"
+  block:
+    - name: Get active connection name for default interface
+      shell: |
+        IFACE="$(ip -o -4 route show to default | awk '{print $5}' | head -n1)"
+        nmcli -t -f NAME,DEVICE con show --active | awk -F: -v i="$IFACE" '$2==i{print $1; exit}'
+      register: nm_conn
+      changed_when: false
+    - name: Configure DNS + search domain on active connection
+      command: >
+        nmcli con mod "{{ nm_conn.stdout }}" ipv4.dns "{{ ad_server }}" ipv4.dns-search "{{ ad_domain }}" ipv4.ignore-auto-dns yes
+
+      changed_when: false
+    - name: Restart connection to apply DNS
+      command: nmcli con up "{{ nm_conn.stdout }}"
+      changed_when: false
+# Last resort: write resolv.conf only if it's not a symlink (so we don't fight resolvconf/systemd-resolved)
+- name: Check if /etc/resolv.conf is a symlink
+  stat:
+    path: /etc/resolv.conf
+  register: resolvconf_stat
+  when:
+    - resolved_active.stdout != "active"
+    - nm_active is not defined or nm_active.stdout != "active"
+- name: Fallback - ensure AD DNS is set in /etc/resolv.conf (only if not a symlink)
+  when:
+    - resolved_active.stdout != "active"
+    - nm_active is not defined or nm_active.stdout != "active"
+    - not resolvconf_stat.stat.islnk
   lineinfile:
     path: /etc/resolv.conf
+    regexp: '^nameserver\s+{{ ad_server | regex_escape() }}$'
     line: "nameserver {{ ad_server }}"
     state: present
 # =========================
 # Packages
 # =========================
-- name: Ensure apt cache is up to date
+- name: Ensure apt cache is up to date (Debian/Ubuntu)
   apt:
     update_cache: yes
     cache_valid_time: 3600
-- name: Install required packages for AD join
+  when: ansible_facts.os_family == 'Debian'
+- name: Install required packages for AD join (Debian/Ubuntu)
   apt:
     name:
       - realmd
@@ -49,6 +88,21 @@
       - policykit-1
       - chrony
     state: present
+  when: ansible_facts.os_family == 'Debian'
+- name: Install required packages for AD join (RHEL/CentOS/Fedora)
+  package:
+    name:
+      - realmd
+      - sssd
+      - sssd-tools
+      - adcli
+      - samba-common-tools
+      - krb5-workstation
+      - oddjob
+      - oddjob-mkhomedir
+      - chrony
+    state: present
+  when: ansible_facts.os_family == 'RedHat'
 # =========================
 # Time sync (Kerberos needs correct time)
 # =========================
@@ -59,23 +113,22 @@
     block: |
       server {{ ad_server }} iburst prefer
   notify: restart chrony
-- name: Ensure chrony is running
+- name: Ensure chrony service is running (Debian/Ubuntu)
   service:
     name: chrony
     state: started
     enabled: true
-- name: Force time sync step (ignore if chrony not ready yet)
+  when: ansible_facts.os_family == 'Debian'
+- name: Ensure chrony service is running (RHEL)
+  service:
+    name: chronyd
+    state: started
+    enabled: true
+  when: ansible_facts.os_family == 'RedHat'
+- name: Force time sync step (ignore if not ready yet)
   command: chronyc -a makestep
   changed_when: false
   failed_when: false
-- name: Show time status (debug)
-  command: timedatectl
-  register: timedate
-  changed_when: false
-  failed_when: false
-- name: Print time status
-  debug:
-    var: timedate.stdout_lines
 # =========================
 # Discover + Kerberos config
 # =========================
@@ -100,20 +153,16 @@
   register: realm_list
   changed_when: false
   failed_when: false
-# =========================
-# Build Kerberos principal safely
-# If ad_admin_user already contains '@', use it as-is.
-# Otherwise append @ad_realm
-# =========================
 - name: Set Kerberos principal
   set_fact:
     ad_principal: >-
       {{ ad_admin_user if ('@' in ad_admin_user) else (ad_admin_user ~ '@' ~ ad_realm) }}
 # =========================
-# Pre-check: verify credentials with kinit (secure) + debug output (safe)
+# Pre-check: verify credentials with kinit
+# NOTE: use shell so stdin works reliably.
 # =========================
 - name: Kerberos auth test (kinit) - secure (uses stdin)
-  command: "kinit {{ ad_principal }}"
+  shell: "kinit {{ ad_principal }}"
   args:
     stdin: "{{ ad_password }}"
   register: kinit_result
@@ -136,17 +185,18 @@
   when: (ad_domain not in realm_list.stdout) and (kinit_result is failed)
 # =========================
 # Join domain (secure + idempotent)
+# Prefer realm join (integrates with realmd), fall back to adcli join if you want.
 # =========================
-- name: Join domain using adcli and create keytab
-  command: >
-    adcli join --domain={{ ad_domain }} --login-user={{ ad_admin_user }} --stdin-password --host-keytab=/etc/krb5.keytab --show-details --verbose
+- name: Join domain using realm (creates keytab)
+  shell: >
+    realm join --verbose {{ ad_domain }} --user={{ ad_admin_user }} --membership-software=adcli
 
   args:
     stdin: "{{ ad_password }}"
-  register: adcli_output
+  register: realm_join
   no_log: true
-  failed_when: adcli_output.rc != 0
   changed_when: true
+  failed_when: realm_join.rc != 0
   notify: restart sssd
   when: ad_domain not in realm_list.stdout
 # =========================
@@ -163,31 +213,33 @@
 - name: Configure nsswitch to use sss (passwd)
   lineinfile:
     path: /etc/nsswitch.conf
-    regexp: '^(passwd:).*'
-    line: 'passwd:         compat systemd sss'
-    backrefs: yes
+    regexp: '^passwd:'
+    line: 'passwd:     files sss'
+    create: false
 - name: Configure nsswitch to use sss (group)
   lineinfile:
     path: /etc/nsswitch.conf
-    regexp: '^(group:).*'
-    line: 'group:          compat systemd sss'
-    backrefs: yes
-- name: Ensure PAM mkhomedir is enabled (Debian/Ubuntu)
-  when: ansible_facts['os_family'] == 'Debian'
-  copy:
-    dest: /etc/pam.d/common-session-nss
-    content: "session required pam_mkhomedir.so skel=/etc/skel/ umask=0022\n"
-    owner: root
-    group: root
-    mode: '0644'
-- name: Ensure PAM mkhomedir is enabled (RHEL/CentOS)
-  when: ansible_facts['os_family'] == 'RedHat'
-  copy:
-    dest: /etc/pam.d/common-session.d/sssd_mkhomedir
-    content: "session required pam_mkhomedir.so skel=/etc/skel/ umask=0022\n"
-    owner: root
-    group: root
-    mode: '0644'
+    regexp: '^group:'
+    line: 'group:      files sss'
+    create: false
+# Enable mkhomedir properly
+- name: Enable mkhomedir on Debian/Ubuntu (pam-auth-update)
+  command: pam-auth-update --enable mkhomedir --force
+  changed_when: false
+  when: ansible_facts.os_family == 'Debian'
+- name: Enable mkhomedir on RHEL (authselect, if available)
+  shell: |
+    if command -v authselect >/dev/null 2>&1; then
+      authselect current >/dev/null 2>&1 || authselect select sssd with-mkhomedir --force
+      authselect enable-feature with-mkhomedir || true
+      authselect apply-changes
+    elif command -v authconfig >/dev/null 2>&1; then
+      authconfig --enablemkhomedir --update
+    else
+      exit 0
+    fi
+  changed_when: false
+  when: ansible_facts.os_family == 'RedHat'
 - name: Ensure sssd service running
   service:
     name: sssd
