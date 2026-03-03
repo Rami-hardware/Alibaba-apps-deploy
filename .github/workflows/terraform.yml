@@ -96,12 +96,12 @@ jobs:
       # -----------------------------
       # Setup Ansible Vault Password
       # -----------------------------
-      - name: Setup Ansible Vault password
-        if: steps.plan.outputs.exitcode == '2'
-        working-directory: ansible
-        run: |
-          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > vault_pass.txt
-          chmod 600 vault_pass.txt
+      # - name: Setup Ansible Vault password
+      #  if: steps.plan.outputs.exitcode == '2'
+      #  working-directory: ansible
+      #  run: |
+      #    echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > vault_pass.txt
+      #    chmod 600 vault_pass.txt
 
       # -----------------------------
       # Test SSH
@@ -115,7 +115,7 @@ jobs:
       # Run Ansible (ONLY if infra changed)
       # -----------------------------
       - name: Run Ansible
-        if: steps.plan.outputs.exitcode == '2'
+      # if: steps.plan.outputs.exitcode == '2'
         working-directory: ansible
         run: |
           ansible-playbook -i inventory.ini deploy.yml \
