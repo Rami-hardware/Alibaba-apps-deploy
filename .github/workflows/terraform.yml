@@ -78,7 +78,7 @@ jobs:
       # Setup SSH Key
       # -----------------------------
       - name: Setup SSH key
-        if: steps.plan.outputs.exitcode == '2'
+      #  if: steps.plan.outputs.exitcode == '2'
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.ALI_PEM_KEY }}" > ~/.ssh/RamiKey.pem
