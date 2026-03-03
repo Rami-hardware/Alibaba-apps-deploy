@@ -45,9 +45,11 @@
       command: nmcli con up "{{ nm_conn.stdout }}"
       changed_when: false
 # =========================
-# Packages
-# =========================
 - name: Update apt cache (Debian)
+  # =========================
+
+  # Packages
+
   apt:
     update_cache: yes
     cache_valid_time: 3600
@@ -85,9 +87,11 @@
     state: present
   when: ansible_facts.os_family == 'RedHat'
 # =========================
-# Time Sync
-# =========================
 - name: Configure chrony
+  # =========================
+
+  # Time Sync
+
   blockinfile:
     path: /etc/chrony/chrony.conf
     marker: "# {mark} ANSIBLE MANAGED BLOCK - AD TIME"
@@ -111,9 +115,11 @@
   changed_when: false
   failed_when: false
 # =========================
-# Kerberos Config
-# =========================
 - name: Configure krb5
+  # =========================
+
+  # Kerberos Config
+
   template:
     src: krb5.conf.j2
     dest: /etc/krb5.conf
@@ -122,9 +128,11 @@
     mode: '0644'
   notify: restart sssd
 # =========================
-# Join AD
-# =========================
 - name: Check realm membership
+  # =========================
+
+  # Join AD
+
   command: realm list --name-only
   register: realm_list
   changed_when: false
@@ -139,7 +147,7 @@
   args:
     stdin: "{{ ad_password }}\n"
   register: adcli_join
-  no_log: true
+  no_log: false
   changed_when: true
   failed_when: adcli_join.rc != 0
   notify: restart sssd
@@ -154,9 +162,11 @@
     msg: "Domain join failed."
   when: ad_domain not in realm_list_after.stdout
 # =========================
-# SSSD Configuration
-# =========================
 - name: Configure sssd
+  # =========================
+
+  # SSSD Configuration
+
   template:
     src: sssd.conf.j2
     dest: /etc/sssd/sssd.conf
@@ -175,9 +185,11 @@
     regexp: '^group:'
     line: 'group:      files sss'
 # =========================
-# mkhomedir
-# =========================
 - name: Enable mkhomedir (Debian)
+  # =========================
+
+  # mkhomedir
+
   command: pam-auth-update --enable mkhomedir --force
   changed_when: false
   when: ansible_facts.os_family == 'Debian'
