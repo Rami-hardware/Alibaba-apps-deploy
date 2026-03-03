@@ -38,9 +38,9 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.ALI_PEM_KEY }}" > ~/.ssh/RamiKey.pem
           chmod 600 ~/.ssh/RamiKey.pem
+      
       - name: Apply only if there are changes
         working-directory: terraform
-        if: steps.plan.outputs.stdout != ''
         run: terraform apply -auto-approve tfplan
 
 #- name: Disable SSH host key checking
