@@ -2,6 +2,6 @@
   hosts: nextcloud_ecs
   become: true
   roles:
-    #  - Nextcloud
-    - VirtualHost
-    #  - join_ad
+    - Nextcloud
+
+#  - VirtualHost
