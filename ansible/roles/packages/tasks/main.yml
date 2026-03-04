@@ -1,17 +1,20 @@
+# =========================
+# Update apt cache
+# =========================
 - name: Update apt cache
   become: true
   apt:
     update_cache: yes
     cache_valid_time: 3600
 # =========================
-# Install Packages
+# Install packages
 # =========================
 - name: Install Apache, PHP, Redis and dependencies
   become: true
   apt:
     name:
       - apache2
-      - redis-server=6.2.*
+      - redis-server
       - php{{ php_version }}
       - php{{ php_version }}-fpm
       - php-mysql
@@ -38,9 +41,9 @@
       - unzip
     state: present
 # =========================
-# Apache Modules
+# Apache modules
 # =========================
-- name: Enable required Apache modules
+- name: Enable Apache modules
   become: true
   command: a2enmod {{ item }}
   args:
@@ -56,7 +59,7 @@
     - setenvif
     - mpm_event
   notify: restart apache
-- name: Disable prefork + mod_php
+- name: Disable prefork and mod_php
   become: true
   command: a2dismod {{ item }}
   args:
@@ -66,34 +69,33 @@
     - mpm_prefork
   ignore_errors: true
   notify: restart apache
-- name: Enable PHP-FPM Apache config
+- name: Enable PHP FPM Apache config
   become: true
   command: a2enconf php{{ php_version }}-fpm
   args:
     creates: "/etc/apache2/conf-enabled/php{{ php_version }}-fpm.conf"
   notify: restart apache
 # =========================
-# Apache Security Hardening
+# Apache hardening
 # =========================
-- name: Harden Apache security headers
+- name: Harden Apache configuration
   become: true
   blockinfile:
     path: /etc/apache2/apache2.conf
-    marker: "# {mark} ANSIBLE MANAGED BLOCK - APACHE HARDENING"
+    marker: "# {mark} ANSIBLE APACHE HARDENING"
     block: |
       ServerTokens Prod
       ServerSignature Off
   notify: restart apache
 # =========================
-# PHP Configuration
+# PHP configuration
 # =========================
-- name: Configure php.ini settings
+- name: Configure php.ini
   become: true
   lineinfile:
     path: "/etc/php/{{ php_version }}/fpm/php.ini"
     regexp: "{{ item.regexp }}"
     line: "{{ item.line }}"
-    backrefs: yes
   loop:
     - {regexp: '^upload_max_filesize', line: 'upload_max_filesize = {{ php_upload_max_filesize }}'}
     - {regexp: '^post_max_size', line: 'post_max_size = {{ php_post_max_size }}'}
@@ -109,15 +111,8 @@
     line: "apc.enable_cli = 1"
     state: present
   notify: restart php-fpm
-- name: Ensure APC CLI in conf.d
-  become: true
-  lineinfile:
-    path: "/etc/php/{{ php_version }}/fpm/conf.d/20-apcu.ini"
-    line: "apc.enable_cli = 1"
-    state: present
-  notify: restart php-fpm
 # =========================
-# PHP-FPM Pool Tuning
+# PHP-FPM tuning
 # =========================
 - name: Configure PHP-FPM pool
   become: true
@@ -132,31 +127,27 @@
     - {regexp: '^pm.max_spare_servers', line: 'pm.max_spare_servers = {{ php_fpm_max_spare }}'}
   notify: restart php-fpm
 # =========================
-# Redis Security Hardening
+# Redis security + socket
 # =========================
-- name: Secure Redis bind interface
+- name: Secure Redis configuration
   become: true
-  lineinfile:
+  blockinfile:
     path: /etc/redis/redis.conf
-    regexp: '^bind'
-    line: 'bind 127.0.0.1 ::1'
+    marker: "# {mark} ANSIBLE REDIS CONFIG"
+    block: |
+      bind 127.0.0.1 ::1
+      protected-mode yes
+      unixsocket /run/redis/redis-server.sock
+      unixsocketperm 770
   notify: restart redis
-- name: Disable Redis protected mode bypass
+- name: Add www-data to redis group
   become: true
-  lineinfile:
-    path: /etc/redis/redis.conf
-    regexp: '^protected-mode'
-    line: 'protected-mode yes'
-  notify: restart redis
-- name: Disable Redis TCP external access
-  become: true
-  lineinfile:
-    path: /etc/redis/redis.conf
-    regexp: '^port'
-    line: 'port 6379'
-  notify: restart redis
+  user:
+    name: www-data
+    groups: redis
+    append: yes
 # =========================
-# Services
+# Ensure services running
 # =========================
 - name: Ensure Apache running
   become: true
@@ -167,7 +158,7 @@
 - name: Ensure PHP-FPM running
   become: true
   service:
-    name: "php{{ php_version }}-fpm"
+    name: php{{ php_version }}-fpm
     state: started
     enabled: true
 - name: Ensure Redis running
