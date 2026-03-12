@@ -28,7 +28,7 @@ resource "alicloud_instance" "instance" {
 
   security_groups = [alicloud_security_group.default.id]
 
-  instance_type        = "ecs.c8i.xlarge"
+  instance_type        = "ecs.c9i.xlarge"
   system_disk_category = "cloud_essd"
   system_disk_size     = 500
 
