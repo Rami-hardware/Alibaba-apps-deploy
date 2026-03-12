@@ -3,7 +3,7 @@ resource "alicloud_db_instance" "rds" {
   engine_version = "10.6"
   instance_type    = "mariadb.x2.large.2c"
   instance_storage = 500
-  instance_name = "nextcloud-rds"
+  instance_name = "NextCloud-RDS"
   vswitch_id = var.vswitch_id
   zone_id    = var.zone_id
   category = "Basic"
