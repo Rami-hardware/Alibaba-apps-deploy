@@ -6,7 +6,6 @@ resource "alicloud_db_instance" "rds" {
   instance_name = "nextcloud-rds"
   vswitch_id = var.vswitch_id
   zone_id    = var.zone_id
-  instance_network_type = "VPC"
   category = "Basic"
 }
 
