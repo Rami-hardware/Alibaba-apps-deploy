@@ -1,0 +1,83 @@
+---
+# =========================
+# Stop Apache
+# =========================
+- name: Stop Apache before deployment
+  become: true
+  service:
+    name: apache2
+    state: stopped
+
+# =========================
+# Create temp directory
+# =========================
+- name: Create temporary download directory
+  become: true
+  file:
+    path: "{{ nextcloud_tmp_dir }}"
+    state: directory
+    mode: '0755'
+
+# =========================
+# Download Nextcloud
+# =========================
+- name: Download Nextcloud Enterprise
+  become: true
+  get_url:
+    url: "{{ nextcloud_download_url }}"
+    dest: "{{ nextcloud_tmp_dir }}/nextcloud.zip"
+    mode: '0644'
+
+# =========================
+# Extract archive
+# =========================
+- name: Extract Nextcloud archive
+  become: true
+  unarchive:
+    src: "{{ nextcloud_tmp_dir }}/nextcloud.zip"
+    dest: "{{ nextcloud_tmp_dir }}"
+    remote_src: true
+
+# =========================
+# Create web directory
+# =========================
+- name: Create Nextcloud web directory
+  become: true
+  file:
+    path: "{{ nextcloud_install_dir }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+
+# =========================
+# Copy Nextcloud files
+# =========================
+- name: Copy Nextcloud files to web directory
+  become: true
+  copy:
+    src: "{{ nextcloud_tmp_dir }}/nextcloud/"
+    dest: "{{ nextcloud_install_dir }}/"
+    remote_src: true
+    owner: www-data
+    group: www-data
+
+# =========================
+# Fix permissions
+# =========================
+- name: Ensure correct ownership
+  become: true
+  file:
+    path: "{{ nextcloud_install_dir }}"
+    owner: www-data
+    group: www-data
+    recurse: true
+
+# =========================
+# Start Apache
+# =========================
+- name: Start Apache
+  become: true
+  service:
+    name: apache2
+    state: started

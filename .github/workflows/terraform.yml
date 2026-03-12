@@ -106,25 +106,25 @@ jobs:
       # -----------------------------
       # Test SSH
       # -----------------------------
-      # - name: Test SSH connection
-      #   if: steps.plan.outputs.exitcode == '2'
-      #   run: |
-      #     ssh -i ~/.ssh/RamiKey.pem root@${{ steps.get_ip.outputs.ip }} "echo connected"
+      - name: Test SSH connection
+        if: steps.plan.outputs.exitcode == '2'
+        run: |
+          ssh -i ~/.ssh/RamiKey.pem root@${{ steps.get_ip.outputs.ip }} "echo connected"
 
       # -----------------------------
       # Run Ansible (ONLY if infra changed)
       # -----------------------------
-      # - name: Run Ansible
-      #   working-directory: ansible
-      #   env:
-      #     AD_PASSWORD: ${{ secrets.AD_ADMIN_PASSWORD }}
-      #   run: |
-      #     echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > vault_pass.txt
-      #     chmod 600 vault_pass.txt
+      - name: Run Ansible
+        working-directory: ansible
+        env:
+          AD_PASSWORD: ${{ secrets.AD_ADMIN_PASSWORD }}
+        run: |
+          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > vault_pass.txt
+          chmod 600 vault_pass.txt
 
-      #     ansible-playbook \
-      #       -i inventory.ini \
-      #       deploy.yml \
-      #       --vault-password-file vault_pass.txt \
-      #       -e "ad_password=$AD_PASSWORD" \
-      #       -e "ad_domain=fac.local ad_realm=FAC.LOCAL ad_server=10.50.6.206 ad_admin_user=administrator"
+          ansible-playbook \
+            -i inventory.ini \
+            deploy.yml \
+            --vault-password-file vault_pass.txt \
+            -e "ad_password=$AD_PASSWORD" \
+            -e "ad_domain=fac.local ad_realm=FAC.LOCAL ad_server=10.50.6.206 ad_admin_user=administrator"

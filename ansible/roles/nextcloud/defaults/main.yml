@@ -1,0 +1,8 @@
+---
+nextcloud_version: "32.0.6"
+nextcloud_build: "25961b13"
+
+nextcloud_download_url: "https://download.nextcloud.com/.customers/server/{{ nextcloud_version }}-{{ nextcloud_build }}/nextcloud-{{ nextcloud_version }}-enterprise.zip"
+
+nextcloud_install_dir: /var/www/nextcloud
+nextcloud_tmp_dir: /tmp/nextcloud
