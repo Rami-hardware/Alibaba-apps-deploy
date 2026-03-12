@@ -6,11 +6,11 @@ data "alicloud_vswitches" "existing" {
   ids = ["vsw-l4vvxjkc508ncrc9lin9k"]
 }
 
-module "ecs" {
-  source = "./modules/ecs"
-  vpc_id     = data.alicloud_vpcs.existing.vpcs[0].id
-  vswitch_id = data.alicloud_vswitches.existing.vswitches[0].id
-}
+#module "ecs" {
+#  source = "./modules/ecs"
+#  vpc_id     = data.alicloud_vpcs.existing.vpcs[0].id
+#  vswitch_id = data.alicloud_vswitches.existing.vswitches[0].id
+#}
 
 module "rds" {
   source = "./modules/rds"
