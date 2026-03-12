@@ -19,7 +19,7 @@ module "rds" {
   db_password = var.db_password
 }
 
-module "oss" {
-  source = "./modules/oss"
-  bucket_name = "nextcloud-storage"
-}
+#module "oss" {
+#  source = "./modules/oss"
+#  bucket_name = "nextcloud-storage"
+#}
