@@ -1,0 +1,47 @@
+---
+- name: Install required packages
+  become: true
+  apt:
+    name:
+    - wget
+    - gnupg
+    state: present
+    update_cache: yes
+
+- name: Download Collabora signing key
+  become: true
+  get_url:
+    url: https://collaboraoffice.com/downloads/gpg/collaboraonline-release-keyring.gpg
+    dest: /usr/share/keyrings/collaboraonline-release-keyring.gpg
+    mode: '0644'
+
+- name: Configure Collabora repository
+  become: true
+  copy:
+    dest: /etc/apt/sources.list.d/collaboraonline.sources
+    content: |
+      Types: deb
+      URIs: https://www.collaboraoffice.com/repos/CollaboraOnline/24.04/customer-deb-{{ collabora_customer_hash }}
+      Suites: ./
+      Signed-By: /usr/share/keyrings/collaboraonline-release-keyring.gpg
+
+- name: Update apt cache
+  become: true
+  apt:
+    update_cache: yes
+
+- name: Install Collabora Online
+  become: true
+  apt:
+    name:
+    - coolwsd
+    - nextcloud-office-brand
+    state: present
+  notify: restart collabora
+
+- name: Ensure Collabora service running
+  become: true
+  service:
+    name: coolwsd
+    state: started
+    enabled: true

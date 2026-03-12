@@ -4,5 +4,4 @@
   roles:
   - packages
   - VirtualHost
-  - join_ad
-  - nextcloud
+  - collabora
