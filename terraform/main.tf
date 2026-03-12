@@ -30,10 +30,10 @@ resource "alicloud_instance" "instance" {
 
   instance_type        = "ecs.c8i.xlarge"
   system_disk_category = "cloud_essd"
-  system_disk_size     = 45
+  system_disk_size     = 500
 
   image_id      = "ubuntu_24_04_x64_20G_alibase_20250916.vhd"
-  instance_name = "nextcloud-ecs-DB"
+  instance_name = "nextcloud-ecs"
 
   # Use your existing vSwitch directly
   vswitch_id = "vsw-l4vvxjkc508ncrc9lin9k"
