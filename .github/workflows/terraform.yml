@@ -3,10 +3,11 @@ name: Deploying Nextcloud
 on:
   push:
     branches:
+      - development
+      - staging
       - main
-  pull_request:
-    branches:
-      - main
+
+
 
 env:
   ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
