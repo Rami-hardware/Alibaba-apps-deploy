@@ -70,14 +70,6 @@ jobs:
             -var="db_password=${{ secrets.DB_PASSWORD }}" \
             -auto-approve tfplan
 
-      # -----------------------------
-      # Get Public IP from Terraform
-      # -----------------------------
-      - name: Get Public IP
-        id: get_ip
-        working-directory: terraform
-        run: |
-          echo "ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
 
       # -----------------------------
       # Setup SSH Key
