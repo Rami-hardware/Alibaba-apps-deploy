@@ -19,7 +19,7 @@ data "alicloud_vpcs" "existing" {
 # Create new Security Group inside existing VPC
 resource "alicloud_security_group" "default" {
   vpc_id = data.alicloud_vpcs.existing.vpcs[0].id
-  name   = "nextcloud-DB-sg"
+  name   = "nextcloud-office-sg"
 }
 
 # Create ECS instance
@@ -33,7 +33,7 @@ resource "alicloud_instance" "instance" {
   system_disk_size     = 500
 
   image_id      = "ubuntu_24_04_x64_20G_alibase_20250916.vhd"
-  instance_name = "nextcloud-ecs-DB"
+  instance_name = "nextcloud-ecs-office"
 
   # Use your existing vSwitch directly
   vswitch_id = "vsw-l4vvxjkc508ncrc9lin9k"
