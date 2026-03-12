@@ -46,13 +46,16 @@ jobs:
         run: terraform validate
 
       # -----------------------------
-      # Terraform Plan (Detect Changes)
+      # Terraform Plan
       # -----------------------------
       - name: Terraform Plan
         id: plan
         working-directory: terraform
         run: |
-          terraform plan -detailed-exitcode -out=tfplan || exitcode=$?
+          terraform plan \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -detailed-exitcode \
+            -out=tfplan || exitcode=$?
           echo "exitcode=${exitcode:-0}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
@@ -62,7 +65,10 @@ jobs:
       - name: Terraform Apply
         if: steps.plan.outputs.exitcode == '2'
         working-directory: terraform
-        run: terraform apply -auto-approve tfplan
+        run: |
+          terraform apply \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -auto-approve tfplan
 
       # -----------------------------
       # Get Public IP from Terraform
@@ -78,7 +84,6 @@ jobs:
       # Setup SSH Key
       # -----------------------------
       - name: Setup SSH key
-      #  if: steps.plan.outputs.exitcode == '2'
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.ALI_PEM_KEY }}" > ~/.ssh/RamiKey.pem
@@ -94,16 +99,6 @@ jobs:
           chmod 600 ~/.ssh/config
 
       # -----------------------------
-      # Setup Ansible Vault Password
-      # -----------------------------
-      # - name: Setup Ansible Vault password
-      #  if: steps.plan.outputs.exitcode == '2'
-      #  working-directory: ansible
-      #  run: |
-      #    echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > vault_pass.txt
-      #    chmod 600 vault_pass.txt
-
-      # -----------------------------
       # Test SSH
       # -----------------------------
       - name: Test SSH connection
@@ -112,12 +107,14 @@ jobs:
           ssh -i ~/.ssh/RamiKey.pem root@${{ steps.get_ip.outputs.ip }} "echo connected"
 
       # -----------------------------
-      # Run Ansible (ONLY if infra changed)
+      # Run Ansible
       # -----------------------------
       - name: Run Ansible
+        if: steps.plan.outputs.exitcode == '2'
         working-directory: ansible
         env:
           AD_PASSWORD: ${{ secrets.AD_ADMIN_PASSWORD }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
           echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > vault_pass.txt
           chmod 600 vault_pass.txt
@@ -127,4 +124,5 @@ jobs:
             deploy.yml \
             --vault-password-file vault_pass.txt \
             -e "ad_password=$AD_PASSWORD" \
+            -e "db_password=$DB_PASSWORD" \
             -e "ad_domain=fac.local ad_realm=FAC.LOCAL ad_server=10.50.6.206 ad_admin_user=administrator"
