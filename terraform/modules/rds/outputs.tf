@@ -9,10 +9,3 @@ output "database_name" {
 output "db_user" {
   value = alicloud_db_account.db_user.name
 }
-output "database_name" {
-  value = alicloud_db_database.nextcloud_db.name
-}
-
-output "db_user" {
-  value = alicloud_db_account.db_user.name
-}
