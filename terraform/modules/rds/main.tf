@@ -1,10 +1,13 @@
 resource "alicloud_db_instance" "rds" {
-  engine           = "MariaDB"
-  engine_version   = "10.6"
+  engine         = "MariaDB"
+  engine_version = "10.6"
   instance_type    = "mariadb.x2.large.2c"
   instance_storage = 500
   instance_name = "nextcloud-rds"
-  category = "HighAvailability"
+  vswitch_id = var.vswitch_id
+  zone_id    = var.zone_id
+  instance_network_type = "VPC"
+  category = "Basic"
 }
 
 resource "alicloud_db_database" "nextcloud_db" {

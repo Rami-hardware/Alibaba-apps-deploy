@@ -62,7 +62,7 @@ jobs:
       # -----------------------------
       # Terraform Apply (ONLY if changes)
       # -----------------------------
-      - name: Terraform Applyc
+      - name: Terraform Apply
         working-directory: terraform
         run: |
           terraform apply \
