@@ -7,8 +7,6 @@ on:
       - staging
       - main
 
-
-
 env:
   ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
   ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
@@ -57,6 +55,7 @@ jobs:
             -var="db_password=${{ secrets.DB_PASSWORD }}" \
             -detailed-exitcode \
             -out=tfplan || exitcode=$?
+
           echo "exitcode=${exitcode:-0}" >> $GITHUB_OUTPUT
         continue-on-error: true
 
@@ -76,7 +75,6 @@ jobs:
       # -----------------------------
       - name: Get Public IP
         id: get_ip
-        if: steps.plan.outputs.exitcode == '2'
         working-directory: terraform
         run: |
           echo "ip=$(terraform output -raw public_ip)" >> $GITHUB_OUTPUT
@@ -94,7 +92,6 @@ jobs:
       # Disable SSH Host Key Checking
       # -----------------------------
       - name: Disable SSH host key checking
-        if: steps.plan.outputs.exitcode == '2'
         run: |
           echo -e "Host *\n\tStrictHostKeyChecking no\n" >> ~/.ssh/config
           chmod 600 ~/.ssh/config
@@ -103,15 +100,13 @@ jobs:
       # Test SSH
       # -----------------------------
       - name: Test SSH connection
-        if: steps.plan.outputs.exitcode == '2'
         run: |
           ssh -i ~/.ssh/RamiKey.pem root@${{ steps.get_ip.outputs.ip }} "echo connected"
 
       # -----------------------------
-      # Run Ansible
+      # Run Ansible (always)
       # -----------------------------
       - name: Run Ansible
-        if: steps.plan.outputs.exitcode == '2'
         working-directory: ansible
         env:
           AD_PASSWORD: ${{ secrets.AD_ADMIN_PASSWORD }}

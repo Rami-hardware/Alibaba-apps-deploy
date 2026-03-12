@@ -14,23 +14,3 @@ resource "alicloud_db_instance" "rds" {
   category     = "HighAvailability"
   storage_type = "cloud_essd"
 }
-
-resource "alicloud_db_database" "nextcloud_db" {
-  instance_id   = alicloud_db_instance.rds.id
-  name          = "ncDB"
-  character_set = "utf8mb4"
-}
-
-resource "alicloud_db_account" "db_user" {
-  instance_id = alicloud_db_instance.rds.id
-  name        = "NCadmin"
-  password    = var.db_password
-  type        = "Normal"
-}
-
-resource "alicloud_db_account_privilege" "privileges" {
-  instance_id  = alicloud_db_instance.rds.id
-  account_name = alicloud_db_account.db_user.name
-  db_names     = [alicloud_db_database.nextcloud_db.name]
-  privilege    = "ReadWrite"
-}
