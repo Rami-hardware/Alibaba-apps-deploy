@@ -69,6 +69,12 @@ jobs:
             -var="db_password=${{ secrets.DB_PASSWORD }}" \
             -auto-approve tfplan
 
+      - name: Setup SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.ALI_PEM_KEY }}" > ~/.ssh/RamiKey.pem
+          chmod 600 ~/.ssh/RamiKey.pem
+
       # -----------------------------
       # Run Ansible (always)
       # -----------------------------
@@ -83,6 +89,7 @@ jobs:
 
           ansible-playbook \
             -i inventory.ini \
+            --private-key ~/.ssh/RamiKey.pem \
             deploy.yml \
             --vault-password-file vault_pass.txt \
             -e "ad_password=$AD_PASSWORD" \
