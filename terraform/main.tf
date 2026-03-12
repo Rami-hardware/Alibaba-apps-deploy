@@ -14,7 +14,6 @@ module "ecs" {
 
 module "rds" {
   source = "./modules/rds"
-
   vswitch_id  = data.alicloud_vswitches.existing.vswitches[0].id
   zone_id     = data.alicloud_vswitches.existing.vswitches[0].zone_id
   db_password = var.db_password
@@ -22,5 +21,5 @@ module "rds" {
 
 module "oss" {
   source = "./modules/oss"
-  bucket_name = var.bucket_name
+  bucket_name = "nextcloud-storage"
 }

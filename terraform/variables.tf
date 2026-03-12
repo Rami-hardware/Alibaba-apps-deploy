@@ -3,7 +3,3 @@ variable "db_password" {
   type        = string
   sensitive   = true
 }
-
-variable "bucket_name" {
-  type = string
-}
