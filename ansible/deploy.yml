@@ -1,5 +1,5 @@
 - name: Deploy Nextcloud with OSS as main storage
-  hosts: nextcloud_ecs
+  hosts: nextcloud_office
   become: true
   roles:
   - packages
