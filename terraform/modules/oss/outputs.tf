@@ -1,3 +1,3 @@
-output "ecs_id" {
-  value = module.ecs.ecs_id
+output "bucket_name" {
+  value = alicloud_oss_bucket.nextcloud.bucket
 }

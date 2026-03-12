@@ -24,6 +24,8 @@ resource "alicloud_instance" "ecs" {
 
   vswitch_id = var.vswitch_id
 
+  security_groups = [alicloud_security_group.ecs_sg.id]
+
   system_disk_category = "cloud_essd"
   system_disk_size     = each.value.disk_size
 
