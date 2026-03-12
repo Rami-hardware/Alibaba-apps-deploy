@@ -12,13 +12,13 @@ resource "alicloud_db_instance" "rds" {
 
 resource "alicloud_db_database" "nextcloud_db" {
   instance_id   = alicloud_db_instance.rds.id
-  name          = "ncDB"
+  name          = "ncdb"
   character_set = "utf8mb4"
 }
 
 resource "alicloud_db_account" "db_user" {
   instance_id = alicloud_db_instance.rds.id
-  name        = "NCadmin"
+  name        = "ncadmin"
   password    = var.db_password
 }
 
