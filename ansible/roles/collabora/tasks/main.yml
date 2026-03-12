@@ -5,6 +5,10 @@
     name:
     - wget
     - gnupg
+    - fonts-dejavu
+    - fonts-liberation
+    - fonts-crosextra-carlito
+    - fonts-crosextra-caladea
     state: present
     update_cache: yes
 
@@ -13,7 +17,7 @@
   get_url:
     url: https://collaboraoffice.com/downloads/gpg/collaboraonline-release-keyring.gpg
     dest: /usr/share/keyrings/collaboraonline-release-keyring.gpg
-    mode: '0644'
+    mode: "0644"
 
 - name: Configure Collabora repository
   become: true
@@ -37,6 +41,24 @@
     - coolwsd
     - nextcloud-office-brand
     state: present
+  notify: restart collabora
+
+- name: Configure coolwsd to listen on port 9980
+  become: true
+  lineinfile:
+    path: /etc/coolwsd/coolwsd.xml
+    regexp: "<port>"
+    line: "      <port>9980</port>"
+    insertafter: "<listen"
+  notify: restart collabora
+
+- name: Allow Nextcloud server in WOPI allow list
+  become: true
+  lineinfile:
+    path: /etc/coolwsd/coolwsd.xml
+    regexp: "<host allow"
+    line: '        <host allow="true">{{ nextcloud_domain }}</host>'
+    insertafter: "<storage"
   notify: restart collabora
 
 - name: Ensure Collabora service running
