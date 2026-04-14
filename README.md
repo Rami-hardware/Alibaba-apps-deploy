@@ -1,158 +1,192 @@
 # Alibaba-NextCloud-WinAD
 
-Automated deployment of **NextCloud** integrated with **Windows Active Directory (WinAD)** using **Alibaba Cloud** for storage, powered by **Docker**, **Terraform**, and **Ansible**.
+Automated deployment of **Nextcloud Enterprise** integrated with **Windows Active Directory** on **Alibaba Cloud**, powered by **Terraform**, **Ansible**, and **GitHub Actions CI/CD**.
 
 ## Table of Contents
 
-- [Overview](#overview)  
-- [Features](#features)  
-- [Prerequisites](#prerequisites)  
-- [Architecture](#architecture)  
-- [Installation](#installation)  
-- [Configuration](#configuration)  
-- [Quick Start](#quick-start)  
-- [Usage](#usage)  
-- [Troubleshooting](#troubleshooting)  
-- [Contributing](#contributing)  
-- [License](#license)  
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Repository Structure](#repository-structure)
+- [CI/CD Pipeline](#cicd-pipeline)
+- [Configuration](#configuration)
+- [Deployment](#deployment)
+- [Secrets Reference](#secrets-reference)
+- [Troubleshooting](#troubleshooting)
 
 ## Overview
 
-This project automates the provisioning of a **NextCloud** environment integrated with **Windows Active Directory** for authentication, while storing data securely on **Alibaba Cloud OSS**. Infrastructure is fully orchestrated with **Terraform** and **Ansible**, and services run inside **Docker containers**, providing a reproducible, scalable, and maintainable deployment.
+This project provisions and configures a **Nextcloud Enterprise** (v32) instance on Alibaba Cloud ECS, joined to an existing **Windows Active Directory** domain for authentication. Users authenticate via Kerberos/SSSD — no separate LDAP integration required. **Collabora Online** (coolwsd) is co-deployed on the same host for in-browser document editing.
 
-## Features
-
-- **Automated Deployment:** Full setup with Docker containers, Terraform for infrastructure, and Ansible for configuration.  
-- **Active Directory Integration:** Centralized authentication via Windows AD.  
-- **Alibaba Cloud OSS Storage:** Cloud-native, scalable backend storage.  
-- **Single Sign-On (SSO):** Seamless login experience for AD users.  
-- **Secure and Containerized:** Runs in Docker with isolated, reproducible environments.  
-
-## Prerequisites
-
-Before deployment, ensure you have:
-
-- **Alibaba Cloud Account** with OSS and ECS access.  
-- **Terraform** installed (v1.5+ recommended).  
-- **Ansible** installed (v2.14+ recommended).  
-- **Docker & Docker Compose** installed on target servers.  
-- **Windows Active Directory** available for authentication.  
-- Admin access to ECS or servers where containers will run.  
+Infrastructure is defined in Terraform targeting the `me-central-1` region and deploys into an existing VPC (`FAC-VPC`). Configuration of the OS, Apache, Nextcloud, AD join, and Collabora is handled by Ansible. The full pipeline runs automatically via GitHub Actions on pushes to `development`, `staging`, and `main`.
 
 ## Architecture
 
 ```text
-+-------------------+        +-------------------+
-| Windows AD Server | <----> | NextCloud LDAP    |
-+-------------------+        | Integration       |
-                             +-------------------+
-                                   |
-                                   v
-                            +----------------+
-                            | Dockerized     |
-                            | NextCloud      |
-                            +----------------+
-                                   |
-                                   v
-                            +----------------+
-                            | Alibaba OSS    |
-                            | Storage        |
-                            +----------------+
++---------------------------+
+|  GitHub Actions CI/CD     |
+|  - Terraform (infra)      |
+|  - Ansible (config)       |
++---------------------------+
+             |
+             v
++---------------------------+       +---------------------------+
+|  Alibaba Cloud ECS        |<----->|  Windows AD (fac.local)   |
+|  me-central-1, FAC-VPC    |       |  Kerberos / SSSD / realm  |
+|                           |       +---------------------------+
+|  Apache 2 + PHP 8.3       |
+|  Nextcloud Enterprise 32  |
+|  Collabora Online (9980)  |
++---------------------------+
+             |
+             v
++---------------------------+
+|  Alibaba Cloud RDS        |
+|  (Nextcloud database)     |
++---------------------------+
 ```
 
-- **Terraform** provisions ECS instances, networking, and storage buckets.  
-- **Ansible** configures Docker, NextCloud, and AD integration.  
-- **Docker** runs NextCloud and dependencies in containers.  
+- **Terraform** looks up the existing VPC/vSwitch and provisions ECS, RDS, and OSS resources.
+- **Ansible** joins the host to AD, installs PHP 8.3 + Apache, deploys Nextcloud Enterprise, and sets up Collabora Online.
+- **GitHub Actions** orchestrates the full pipeline end-to-end.
 
-## Installation
+## Prerequisites
 
-1. **Clone the repository**  
+- Alibaba Cloud account with access to `me-central-1` and an existing VPC named `FAC-VPC`.
+- Windows Active Directory domain reachable from the ECS instance (`fac.local` / `FAC.LOCAL`).
+- Terraform >= 1.6.
+- Ansible with Vault support.
+- SSH key (PEM) for ECS access stored as a GitHub secret.
+- A Nextcloud Enterprise download token (the download URL includes a customer hash).
 
-```bash
-git clone https://github.com/yourusername/Alibaba-NextCloud-WinAD.git
-cd Alibaba-NextCloud-WinAD
+## Repository Structure
+
+```text
+.
+├── terraform/
+│   ├── provider.tf          # Alibaba Cloud provider (me-central-1)
+│   ├── main.tf              # VPC/vSwitch data sources; ECS/RDS/OSS modules
+│   ├── variables.tf         # Input variables (db_password, etc.)
+│   ├── outputs.tf
+│   └── modules/
+│       ├── ecs/             # ECS instance
+│       ├── rds/             # ApsaraDB RDS for Nextcloud
+│       └── oss/             # OSS bucket
+├── ansible/
+│   ├── deploy.yml           # Main playbook (packages → VirtualHost → collabora)
+│   ├── inventory.ini        # Ansible Vault-encrypted host inventory
+│   └── roles/
+│       ├── packages/        # PHP 8.3, Apache, system packages
+│       ├── join_ad/         # DNS, chrony, Kerberos, realm join, SSSD
+│       ├── nextcloud/       # Download & install Nextcloud Enterprise
+│       ├── VirtualHost/     # Apache VirtualHost for Nextcloud
+│       └── collabora/       # Collabora Online (coolwsd) install & config
+└── .github/
+    └── workflows/
+        └── terraform.yml    # CI/CD pipeline definition
 ```
 
-2. **Terraform: Provision Infrastructure**  
+## CI/CD Pipeline
 
-```bash
-cd terraform
-terraform init
-terraform apply
-```
+The GitHub Actions workflow (`.github/workflows/terraform.yml`) triggers on push to `development`, `staging`, or `main` and runs the following steps:
 
-- This will create ECS instances, networking, and OSS buckets on Alibaba Cloud.  
+1. **Terraform Init / Validate / Plan** — plans infrastructure changes.
+2. **Terraform Apply** — applies the plan (auto-approved).
+3. **SSH key setup** — writes the PEM key from secrets.
+4. **Ansible Playbook** — decrypts the vault inventory, then runs `deploy.yml` against the target host, passing AD and DB credentials as extra vars.
 
-3. **Ansible: Configure Servers and Deploy Docker Containers**  
+AD connection parameters passed at runtime:
 
-```bash
-cd ../ansible
-ansible-playbook -i inventory.yml deploy-nextcloud.yml
-```
-
-- Configures Docker, deploys NextCloud containers, and integrates LDAP with Windows AD.  
-
-4. **Verify Deployment**  
-
-- Access NextCloud via browser: `https://<ecs-public-ip>`  
-- Login with AD credentials.  
+| Variable | Value |
+| --- | --- |
+| `ad_domain` | `fac.local` |
+| `ad_realm` | `FAC.LOCAL` |
+| `ad_server` | `10.50.6.206` |
+| `ad_admin_user` | `administrator` |
 
 ## Configuration
 
-- **NextCloud LDAP/AD Integration:**  
+### Nextcloud Enterprise
 
-  - AD Server: `ad.yourdomain.com`  
-  - Base DN: `DC=yourdomain,DC=com`  
-  - Bind DN: `CN=admin,CN=Users,DC=yourdomain,DC=com`  
+Set the download URL and version in [ansible/roles/nextcloud/defaults/main.yml](ansible/roles/nextcloud/defaults/main.yml):
 
-- **Alibaba OSS Storage:**  
-
-  - OSS Bucket: `nextcloud-data`  
-  - Endpoint: `oss-yourregion.aliyuncs.com`  
-  - Access Key & Secret Key: from Alibaba Cloud console  
-
-- **Docker Compose:** Modify `docker-compose.yml` for environment variables and volumes.  
-
-## Quick Start
-
-1. **Create a `.env` file** in the project root:
-
-```env
-NEXTCLOUD_ADMIN_USER=admin
-NEXTCLOUD_ADMIN_PASSWORD=YourStrongPassword
-AD_SERVER=ad.yourdomain.com
-AD_BASE_DN=DC=yourdomain,DC=com
-AD_BIND_DN=CN=admin,CN=Users,DC=yourdomain,DC=com
-ALIYUN_OSS_BUCKET=nextcloud-data
-ALIYUN_OSS_ENDPOINT=oss-yourregion.aliyuncs.com
-ALIYUN_ACCESS_KEY=YourAccessKey
-ALIYUN_SECRET_KEY=YourSecretKey
+```yaml
+nextcloud_version: "32.0.6"
+nextcloud_build: "25961b13"
+nextcloud_download_url: "https://download.nextcloud.com/.customers/server/{{ nextcloud_version }}-{{ nextcloud_build }}/nextcloud-{{ nextcloud_version }}-enterprise.zip"
 ```
 
-2. **Start Docker Containers**  
+### PHP
+
+PHP 8.3 tuning defaults are in [ansible/roles/packages/defaults/main.yml](ansible/roles/packages/defaults/main.yml):
+
+```yaml
+php_version: "8.3"
+php_upload_max_filesize: "2048M"
+php_memory_limit: "4096M"
+php_fpm_max_children: 500
+```
+
+### Collabora Online
+
+Set the `collabora_customer_hash` variable (used to build the apt repo URL) and the Nextcloud domain for the WOPI allow-list in [ansible/roles/collabora/defaults/main.yml](ansible/roles/collabora/defaults/main.yml). Collabora listens on port `9980`.
+
+### Active Directory Join
+
+The `join_ad` role handles the full domain join sequence:
+
+1. Configures DNS to point at the AD server via `systemd-resolved`.
+2. Installs `realmd`, `sssd`, `adcli`, `krb5-user`, `chrony`.
+3. Syncs time with the AD server via chrony.
+4. Writes `/etc/krb5.conf` from a Jinja2 template.
+5. Runs `realm join fac.local` with the administrator password.
+6. Writes `/etc/sssd/sssd.conf` and enables `mkhomedir`.
+
+## Deployment
+
+### Manual (local)
 
 ```bash
-docker-compose up -d
+# 1. Provision infrastructure
+cd terraform
+terraform init
+terraform apply -var="db_password=<password>"
+
+# 2. Configure the host
+cd ../ansible
+ansible-playbook \
+  -i inventory.ini \
+  --private-key ~/.ssh/RamiKey.pem \
+  deploy.yml \
+  --vault-password-file vault_pass.txt \
+  -e "ad_password=<AD_PASSWORD> db_password=<DB_PASSWORD> \
+      ad_domain=fac.local ad_realm=FAC.LOCAL \
+      ad_server=10.50.6.206 ad_admin_user=administrator"
 ```
 
-- The containers will run NextCloud with AD integration and Alibaba OSS storage.  
+### Automated (GitHub Actions)
 
-## Usage
+Push to `development`, `staging`, or `main`. The pipeline reads credentials from repository secrets and runs Terraform + Ansible automatically.
 
-- Users log in to NextCloud using **Windows AD credentials**.  
-- Files are stored in **Alibaba OSS**, accessible via web or client apps.  
-- Admins manage users and permissions centrally via AD.  
+## Secrets Reference
+
+| Secret | Used by | Description |
+| --- | --- | --- |
+| `ALICLOUD_ACCESS_KEY` | Terraform | Alibaba Cloud access key |
+| `ALICLOUD_SECRET_KEY` | Terraform | Alibaba Cloud secret key |
+| `DB_PASSWORD` | Terraform + Ansible | Nextcloud RDS database password |
+| `ALI_PEM_KEY` | Ansible | PEM private key for ECS SSH access |
+| `AD_ADMIN_PASSWORD` | Ansible | Windows AD administrator password for domain join |
+| `ANSIBLE_VAULT_PASSWORD` | Ansible | Password to decrypt `inventory.ini` |
 
 ## Troubleshooting
 
-- **Terraform Errors:** Verify Alibaba Cloud credentials and network settings.  
-- **Ansible Failures:** Check SSH connectivity, permissions, and inventory variables.  
-- **LDAP Integration Issues:** Confirm AD server, ports, and Bind DN.  
-- **Docker Container Issues:** Check `docker logs nextcloud` and `docker-compose ps`.  
-
-## Contributing
-
-Contributions are welcome via GitHub issues or pull requests.  
+- **Terraform errors** — verify `ALICLOUD_ACCESS_KEY`/`ALICLOUD_SECRET_KEY` and that the FAC-VPC exists in `me-central-1`.
+- **realm join fails** — confirm the ECS instance can reach `10.50.6.206` on UDP 88 (Kerberos) and TCP 389. Check that chrony has synced time within 5 minutes of the AD server.
+- **SSSD not resolving AD users** — run `sssctl user-checks <user>@fac.local` and inspect `/var/log/sssd/`.
+- **Apache / Nextcloud not starting** — check `journalctl -u apache2` and `/var/www/nextcloud/data/nextcloud.log`.
+- **Collabora not reachable** — verify `coolwsd` is running (`systemctl status coolwsd`) and port 9980 is open in the ECS security group.
+- **Ansible Vault errors** — ensure `vault_pass.txt` contains the exact password stored in the `ANSIBLE_VAULT_PASSWORD` secret.
 
 ## License
 

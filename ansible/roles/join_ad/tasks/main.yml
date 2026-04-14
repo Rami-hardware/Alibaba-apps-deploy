@@ -2,7 +2,7 @@
 # DNS
 # =========================
 - name: Detect if systemd-resolved is active
-  command: systemctl is-active systemd-resolved
+  ansible.builtin.command: systemctl is-active systemd-resolved
   register: resolved_active
   changed_when: false
   failed_when: false
@@ -10,26 +10,25 @@
   when: resolved_active.stdout == "active"
   block:
     - name: Get default interface
-      shell: ip -o -4 route show to default | awk '{print $5}' | head -n1
+      ansible.builtin.shell: ip -o -4 route show to default | awk '{print $5}' | head -n1
       register: default_if
       changed_when: false
     - name: Set DNS server
-      command: resolvectl dns {{ default_if.stdout }} {{ ad_server }}
+      ansible.builtin.command: resolvectl dns {{ default_if.stdout }} {{ ad_server }}
       changed_when: false
     - name: Set search domain
-      command: resolvectl domain {{ default_if.stdout }} {{ ad_domain }}
+      ansible.builtin.command: resolvectl domain {{ default_if.stdout }} {{ ad_domain }}
       changed_when: false
+# =========================
+# Packages
+# =========================
 - name: Update apt cache (Debian)
-  # =========================
-
-  # =========================
-  # Packages
-  apt:
+  ansible.builtin.apt:
     update_cache: yes
     cache_valid_time: 3600
   when: ansible_facts.os_family == "Debian"
 - name: Install packages (Debian)
-  apt:
+  ansible.builtin.apt:
     name:
       - realmd
       - sssd
@@ -45,7 +44,7 @@
     state: present
   when: ansible_facts.os_family == "Debian"
 - name: Install packages (RHEL)
-  package:
+  ansible.builtin.package:
     name:
       - realmd
       - sssd
@@ -58,61 +57,57 @@
       - chrony
     state: present
   when: ansible_facts.os_family == "RedHat"
+# =========================
+# Time Sync
+# =========================
 - name: Configure chrony
-  # =========================
-
-  # =========================
-  # Time Sync
-  blockinfile:
+  ansible.builtin.blockinfile:
     path: /etc/chrony/chrony.conf
     marker: "# {mark} ANSIBLE MANAGED BLOCK - AD TIME"
     block: |
       server {{ ad_server }} iburst prefer
   notify: restart chrony
 - name: Ensure chrony running (Debian)
-  service:
+  ansible.builtin.service:
     name: chrony
     state: started
     enabled: true
   when: ansible_facts.os_family == "Debian"
 - name: Ensure chrony running (RHEL)
-  service:
+  ansible.builtin.service:
     name: chronyd
     state: started
     enabled: true
   when: ansible_facts.os_family == "RedHat"
 - name: Force time sync
-  command: chronyc -a makestep
+  ansible.builtin.command: chronyc -a makestep
   changed_when: false
   failed_when: false
+# =========================
+# Kerberos Config
+# =========================
 - name: Configure krb5
-  # =========================
-
-  # =========================
-  # Kerberos Config
-  template:
+  ansible.builtin.template:
     src: krb5.conf.j2
     dest: /etc/krb5.conf
     owner: root
     group: root
     mode: "0644"
   notify: restart sssd
+# =========================
+# Join AD (Stable Method)
+# =========================
 - name: Check realm membership
-  # =========================
-
-  # =========================
-  # Join AD (Stable Method)
-  command: realm list --name-only
+  ansible.builtin.command: realm list --name-only
   register: realm_list
   changed_when: false
   failed_when: false
 - name: Set short computer name (15 char NetBIOS limit)
-  set_fact:
+  ansible.builtin.set_fact:
     ad_computer_name: "{{ ansible_hostname[:15] }}"
 - name: Join domain using realm
-  command: >
+  ansible.builtin.command: >
     realm join {{ ad_domain }} --user={{ ad_admin_user }} --computer-name={{ ad_computer_name }}
-
   args:
     stdin: "{{ ad_password }}\n"
   register: realm_join
@@ -121,23 +116,21 @@
   failed_when: realm_join.rc != 0
   when: ad_domain not in realm_list.stdout
   notify: restart sssd
+# ---- Validate ----
 - name: Validate join
-  # ---- Validate ----
-
-  command: realm list --name-only
+  ansible.builtin.command: realm list --name-only
   register: realm_list_after
   changed_when: false
   failed_when: false
 - name: Fail if join unsuccessful
-  fail:
+  ansible.builtin.fail:
     msg: "Domain join failed."
   when: ad_domain not in realm_list_after.stdout
+# =========================
+# SSSD Configuration
+# =========================
 - name: Configure sssd
-  # =========================
-
-  # =========================
-  # SSSD Configuration
-  template:
+  ansible.builtin.template:
     src: sssd.conf.j2
     dest: /etc/sssd/sssd.conf
     owner: root
@@ -145,25 +138,24 @@
     mode: "0600"
   notify: restart sssd
 - name: Configure nsswitch passwd
-  lineinfile:
+  ansible.builtin.lineinfile:
     path: /etc/nsswitch.conf
     regexp: "^passwd:"
     line: "passwd:     files sss"
 - name: Configure nsswitch group
-  lineinfile:
+  ansible.builtin.lineinfile:
     path: /etc/nsswitch.conf
     regexp: "^group:"
     line: "group:      files sss"
+# =========================
+# mkhomedir
+# =========================
 - name: Enable mkhomedir (Debian)
-  # =========================
-
-  # =========================
-  # mkhomedir
-  command: pam-auth-update --enable mkhomedir --force
+  ansible.builtin.command: pam-auth-update --enable mkhomedir --force
   changed_when: false
   when: ansible_facts.os_family == "Debian"
 - name: Enable mkhomedir (RHEL)
-  shell: |
+  ansible.builtin.shell: |
     if command -v authselect >/dev/null 2>&1; then
       authselect select sssd with-mkhomedir --force
       authselect apply-changes
@@ -173,7 +165,7 @@
   changed_when: false
   when: ansible_facts.os_family == "RedHat"
 - name: Ensure sssd running
-  service:
+  ansible.builtin.service:
     name: sssd
     state: started
     enabled: true

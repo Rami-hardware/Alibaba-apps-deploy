@@ -1,6 +1,6 @@
 ---
 - name: restart collabora
   become: true
-  service:
+  ansible.builtin.service:
     name: coolwsd
     state: restarted
