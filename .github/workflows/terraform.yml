@@ -1,97 +1,186 @@
-name: Deploying Nextcloud
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: AliBaba CI/CD
 
 on:
   push:
     branches:
+      - Nextcloud
       - development
       - staging
       - main
 
-env:
-  ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
-  ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
-
 jobs:
-  Deploy:
+  testing:
+    name: Testing Infrastructure Code
     runs-on: ubuntu-latest
+    environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'staging' && 'staging' || 'development' }}
 
     steps:
-      # -----------------------------
-      # Checkout Repo
-      # -----------------------------
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      # -----------------------------
-      # Setup Terraform
-      # -----------------------------
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y unzip curl git python3-venv python3-pip
+
+      - name: Verify installations
+        run: |
+          unzip -v
+          git --version
+          curl --version
+
+      # ── Terraform ────────────────────────────────────────────────────────────
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ">=1.6 <2.0"
 
-      # -----------------------------
-      # Terraform Init
-      # -----------------------------
-      - name: Terraform Init
+      - name: Terraform init (no backend)
         working-directory: terraform
-        run: terraform init
+        run: terraform init -backend=false
 
-      # -----------------------------
-      # Terraform Validate
-      # -----------------------------
-      - name: Terraform Validate
+      - name: Terraform format check
+        working-directory: terraform
+        run: terraform fmt -check -recursive
+
+      - name: Terraform validate
         working-directory: terraform
         run: terraform validate
 
-      # -----------------------------
-      # Terraform Plan
-      # -----------------------------
-      - name: Terraform Plan
+      # ── Ansible ──────────────────────────────────────────────────────────────
+      - name: Install Ansible lint in virtualenv
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install ansible-lint
+
+      - name: Create Ansible Vault password file
+        run: |
+          echo "${ANSIBLE_VAULT_PASSWORD}" > ~/.vault_pass
+          chmod 600 ~/.vault_pass
+        env:
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+
+      - name: Ansible syntax check
+        run: |
+          source venv/bin/activate
+          ansible-playbook -i ansible/inventory.ini ansible/deploy.yml \
+            --syntax-check \
+            --vault-password-file ~/.vault_pass
+
+      - name: Ansible lint
+        run: |
+          source venv/bin/activate
+          ansible-lint ansible/
+
+      - name: Cleanup vault password file
+        if: always()
+        run: rm -f ~/.vault_pass
+
+  Deploy:
+    name: Deploy Infrastructure Code
+    runs-on: ubuntu-latest
+    needs: testing
+    if: github.ref == 'refs/heads/main'
+    environment: production
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # ── Terraform ────────────────────────────────────────────────────────────
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ">=1.6 <2.0"
+
+      - name: Terraform init
+        working-directory: terraform
+        env:
+          ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+          ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
+        run: terraform init
+
+      - name: Terraform plan
         id: plan
         working-directory: terraform
+        env:
+          ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+          ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
         run: |
+          set +e
           terraform plan \
             -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -input=false \
+            -no-color \
             -detailed-exitcode \
-            -out=tfplan || exitcode=$?
+            -out=tfplan
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -eq 1 ]; then
+            echo "Terraform plan failed."
+            exit 1
+          elif [ $EXIT_CODE -eq 2 ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "Changes detected — will apply."
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "No changes — skipping apply."
+          fi
 
-          echo "exitcode=${exitcode:-0}" >> $GITHUB_OUTPUT
-        continue-on-error: true
-
-      # -----------------------------
-      # Terraform Apply (ONLY if changes)
-      # -----------------------------
-      - name: Terraform Apply
+      - name: Terraform apply
+        if: steps.plan.outputs.has_changes == 'true'
         working-directory: terraform
+        env:
+          ALICLOUD_ACCESS_KEY: ${{ secrets.ALICLOUD_ACCESS_KEY }}
+          ALICLOUD_SECRET_KEY: ${{ secrets.ALICLOUD_SECRET_KEY }}
         run: |
           terraform apply \
             -var="db_password=${{ secrets.DB_PASSWORD }}" \
             -auto-approve tfplan
 
-      - name: Setup SSH key
+      # ── Ansible ──────────────────────────────────────────────────────────────
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y python3-venv python3-pip
+
+      - name: Set up Python virtualenv
+        run: |
+          python3 -m venv venv
+          source venv/bin/activate
+          pip install --upgrade pip
+          pip install ansible
+
+      - name: Setup SSH and Vault
+        shell: bash
         run: |
           mkdir -p ~/.ssh
           echo "${{ secrets.ALI_PEM_KEY }}" > ~/.ssh/RamiKey.pem
           chmod 600 ~/.ssh/RamiKey.pem
-
-      # -----------------------------
-      # Run Ansible (always)
-      # -----------------------------
-      - name: Run Ansible
-        working-directory: ansible
+          echo "${ANSIBLE_VAULT_PASSWORD}" > ~/.vault_pass
+          chmod 600 ~/.vault_pass
         env:
+          ANSIBLE_VAULT_PASSWORD: ${{ secrets.ANSIBLE_VAULT_PASSWORD }}
+
+      - name: Run Ansible playbook
+        env:
+          ANSIBLE_VAULT_PASSWORD_FILE: ~/.vault_pass
+          ANSIBLE_HOST_KEY_CHECKING: "False"
           AD_PASSWORD: ${{ secrets.AD_ADMIN_PASSWORD }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
         run: |
-          echo "${{ secrets.ANSIBLE_VAULT_PASSWORD }}" > vault_pass.txt
-          chmod 600 vault_pass.txt
-
+          source venv/bin/activate
           ansible-playbook \
-            -i inventory.ini \
+            -i ansible/inventory.ini \
             --private-key ~/.ssh/RamiKey.pem \
-            deploy.yml \
-            --vault-password-file vault_pass.txt \
-            -e "ad_password=$AD_PASSWORD" \
-            -e "db_password=$DB_PASSWORD" \
+            ansible/deploy.yml \
+            -e "ad_password=${AD_PASSWORD}" \
+            -e "db_password=${DB_PASSWORD}" \
             -e "ad_domain=fac.local ad_realm=FAC.LOCAL ad_server=10.50.6.206 ad_admin_user=administrator"
+
+      - name: Cleanup secrets
+        if: always()
+        run: |
+          rm -f ~/.vault_pass
+          rm -f ~/.ssh/RamiKey.pem
